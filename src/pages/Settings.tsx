@@ -3,7 +3,7 @@ import { Layout } from '../components/Layout';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Save, Building2, Mail, DollarSign, Package, Users, Calendar, FileText, Download } from 'lucide-react';
+import { Save, Building2, Mail, DollarSign, Package, Users, Calendar, FileText, Download, Upload, X, CheckCircle, AlertCircle } from 'lucide-react';
 import { GmailSettings } from '../components/crm/GmailSettings';
 import { UserManagement } from '../components/settings/UserManagement';
 import { EmailTemplates } from '../components/settings/EmailTemplates';
@@ -206,6 +206,53 @@ export function Settings() {
     }
   };
 
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<{ success: boolean; message: string; imported?: Record<string, number> } | null>(null);
+
+  const handleRestoreBackup = async () => {
+    if (!restoreFile) return;
+    setRestoring(true);
+    setRestoreResult(null);
+    try {
+      const text = await restoreFile.text();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        setRestoreResult({ success: false, message: 'Invalid JSON file. Please select a valid backup file.' });
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/backup-import`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        setRestoreResult({ success: false, message: json.error ?? 'Import failed. Please try again.' });
+      } else {
+        setRestoreResult({ success: true, message: 'Backup restored successfully.', imported: json.imported });
+      }
+    } catch (error) {
+      setRestoreResult({ success: false, message: (error as Error).message ?? 'Unexpected error during restore.' });
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const handleCloseRestoreModal = () => {
+    setShowRestoreModal(false);
+    setRestoreFile(null);
+    setRestoreResult(null);
+  };
+
   const isAdmin = profile?.role === 'admin';
   const isSales = profile?.role === 'sales';
   const isAccountant = profile?.role === 'accounts';
@@ -241,13 +288,22 @@ export function Settings() {
             <p className="text-gray-600 mt-1">Configure system settings and manage users</p>
           </div>
           {isAdmin && (
-            <button
-              onClick={handleDownloadBackup}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition text-sm font-medium"
-            >
-              <Download className="w-4 h-4" />
-              Download Backup
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowRestoreModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium"
+              >
+                <Upload className="w-4 h-4" />
+                Restore Backup
+              </button>
+              <button
+                onClick={handleDownloadBackup}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition text-sm font-medium"
+              >
+                <Download className="w-4 h-4" />
+                Download Backup
+              </button>
+            </div>
           )}
         </div>
 
@@ -737,6 +793,117 @@ export function Settings() {
           </div>
         </div>
       </div>
+
+      {showRestoreModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Restore Backup</h2>
+                <p className="text-sm text-gray-500 mt-0.5">Upload a JSON backup file to restore data</p>
+              </div>
+              <button
+                onClick={handleCloseRestoreModal}
+                className="text-gray-400 hover:text-gray-600 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {!restoreResult && (
+                <>
+                  <div
+                    className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition"
+                    onClick={() => document.getElementById('restore-file-input')?.click()}
+                  >
+                    <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                    {restoreFile ? (
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{restoreFile.name}</p>
+                        <p className="text-xs text-gray-500 mt-1">{(restoreFile.size / 1024).toFixed(1)} KB</p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Click to select backup file</p>
+                        <p className="text-xs text-gray-500 mt-1">JSON files only</p>
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    id="restore-file-input"
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={(e) => {
+                      setRestoreFile(e.target.files?.[0] ?? null);
+                      e.target.value = '';
+                    }}
+                  />
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p className="text-xs text-amber-800">
+                      <strong>Warning:</strong> Restoring a backup will upsert all records from the file. Existing records with matching IDs will be overwritten.
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {restoreResult && (
+                <div className={`rounded-lg p-4 ${restoreResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                  <div className="flex items-start gap-3">
+                    {restoreResult.success
+                      ? <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                      : <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                    }
+                    <div>
+                      <p className={`text-sm font-medium ${restoreResult.success ? 'text-green-800' : 'text-red-800'}`}>
+                        {restoreResult.message}
+                      </p>
+                      {restoreResult.imported && (
+                        <ul className="mt-2 space-y-0.5">
+                          {Object.entries(restoreResult.imported).map(([table, count]) => (
+                            <li key={table} className="text-xs text-green-700">
+                              {table}: {count} record{count !== 1 ? 's' : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 px-6 pb-6">
+              <button
+                onClick={handleCloseRestoreModal}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition"
+              >
+                {restoreResult?.success ? 'Close' : 'Cancel'}
+              </button>
+              {!restoreResult && (
+                <button
+                  onClick={handleRestoreBackup}
+                  disabled={!restoreFile || restoring}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {restoring ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Restoring...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      Restore
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
