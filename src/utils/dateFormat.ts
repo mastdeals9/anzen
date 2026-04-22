@@ -135,6 +135,26 @@ export const getTodayInputFormat = (): string => {
 export const formatTableDate = formatDate;
 
 /**
+ * Returns financial year string "YY-YY" for a given date.
+ * FY starts April 1. Examples:
+ * Financial year follows the calendar year (Jan – Dec).
+ *   Any date in 2025 → "25"
+ *   Any date in 2026 → "26"
+ */
+export const getFinancialYear = (date: Date | string): string => {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return String(d.getFullYear()).slice(-2);
+};
+
+/**
+ * Generate a voucher/invoice number in format PREFIX/YY-YY/NNN.
+ * Counts existing numbers with same prefix+FY and increments.
+ * dateStr: YYYY-MM-DD string for the document date.
+ */
+export const buildVoucherNumber = (prefix: string, fy: string, seq: number): string =>
+  `${prefix}/${fy}/${String(seq).padStart(3, '0')}`;
+
+/**
  * Parse ISO date string and return in DD/MM/YYYY format
  * @param isoDate - ISO date string (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)
  * @returns Formatted date string (DD/MM/YYYY)
