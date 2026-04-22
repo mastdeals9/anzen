@@ -112,6 +112,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
   const [editValue, setEditValue] = useState('');
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [selectedInquiryForEmail, setSelectedInquiryForEmail] = useState<Inquiry | null>(null);
+  const [emailMode, setEmailMode] = useState<'price' | 'coa' | 'general'>('general');
   const [logCallModalOpen, setLogCallModalOpen] = useState(false);
   const [callNotes, setCallNotes] = useState('');
   const [followUpModalOpen, setFollowUpModalOpen] = useState(false);
@@ -852,6 +853,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     const selectedInquiry = filteredData.find(i => selectedRows.has(i.id));
     if (selectedInquiry) {
       setSelectedInquiryForEmail(selectedInquiry);
+      setEmailMode('price');
       setEmailModalOpen(true);
     }
   };
@@ -861,6 +863,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     if (!selectedInquiry) return;
 
     setSelectedInquiryForEmail(selectedInquiry);
+    setEmailMode('coa');
     setEmailModalOpen(true);
   };
 
@@ -1863,9 +1866,11 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
           onClose={() => {
             setEmailModalOpen(false);
             setSelectedInquiryForEmail(null);
+            setEmailMode('general');
             onRefresh();
           }}
           inquiry={selectedInquiryForEmail}
+          mode={emailMode}
         />
       )}
 

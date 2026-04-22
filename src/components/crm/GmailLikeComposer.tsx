@@ -16,6 +16,7 @@ interface Inquiry {
   supplier_name?: string | null;
   supplier_country?: string | null;
   email_subject?: string | null;
+  mail_subject?: string | null;
   offered_price?: number | null;
   offered_price_currency?: string;
   purchase_price?: number | null;
@@ -35,6 +36,7 @@ interface GmailLikeComposerProps {
   isOpen: boolean;
   onClose: () => void;
   inquiry: Inquiry;
+  mode?: 'price' | 'coa' | 'general';
   replyTo?: {
     email_id: string;
     subject: string;
@@ -60,7 +62,16 @@ const quillModules = {
 
 const quillFormats = ['bold', 'italic', 'underline', 'list', 'bullet', 'link'];
 
-export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLikeComposerProps) {
+function buildSubject(inquiry: Inquiry, mode: 'price' | 'coa' | 'general', replyTo?: GmailLikeComposerProps['replyTo']): string {
+  if (replyTo?.subject) {
+    return replyTo.subject.startsWith('Re:') ? replyTo.subject : `Re: ${replyTo.subject}`;
+  }
+  // Use the original email thread subject for proper conversation threading
+  const baseSubject = inquiry.mail_subject || inquiry.email_subject || `${inquiry.product_name} - ${inquiry.inquiry_number}`;
+  return `Re: ${baseSubject}`;
+}
+
+export function GmailLikeComposer({ isOpen, onClose, inquiry, mode = 'general', replyTo }: GmailLikeComposerProps) {
   const [toEmail, setToEmail] = useState(inquiry.contact_email || '');
   const [ccEmail, setCcEmail] = useState('');
   const [bccEmail, setBccEmail] = useState('');
@@ -76,37 +87,26 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
   const [fullscreen, setFullscreen] = useState(false);
   const [currentUserName, setCurrentUserName] = useState('');
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
-  const [currentUserId, setCurrentUserId] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     loadTemplates();
     loadUserInfo();
-
-    // Subject: use existing email_subject from inquiry, or build a fresh one
-    const defaultSubject = inquiry.email_subject
-      ? inquiry.email_subject
-      : `${inquiry.product_name} - ${inquiry.inquiry_number}`;
+    setSubject(buildSubject(inquiry, mode, replyTo));
 
     if (replyTo) {
-      const reSubject = replyTo.subject.startsWith('Re:')
-        ? replyTo.subject
-        : `Re: ${replyTo.subject}`;
-      setSubject(reSubject);
       const quotedBody = `<br><br><div style="border-left:3px solid #e2e8f0;padding-left:12px;margin-left:8px;color:#64748b"><p><strong>${replyTo.from_email} wrote:</strong></p>${replyTo.body}</div>`;
       setBody(quotedBody);
     } else {
-      setSubject(defaultSubject);
-      generateDefaultBody();
+      generateBody(mode);
     }
-  }, [isOpen, inquiry.id]);
+  }, [isOpen, inquiry.id, mode]);
 
   const loadUserInfo = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      setCurrentUserId(user.id);
 
       const [profileRes, gmailRes] = await Promise.all([
         supabase.from('user_profiles').select('full_name').eq('id', user.id).maybeSingle(),
@@ -133,19 +133,43 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
     }
   };
 
-  const generateDefaultBody = () => {
-    let html = `<p>Dear ${inquiry.contact_person || 'Sir/Madam'},</p><p>Thank you for your inquiry regarding <strong>${inquiry.product_name}</strong>.</p>`;
-    if (inquiry.specification) html += `<p><strong>Specification:</strong> ${inquiry.specification}</p>`;
-    html += `<p><strong>Quantity:</strong> ${inquiry.quantity}</p>`;
-    if (inquiry.offered_price && inquiry.offered_price > 0) {
-      const cur = inquiry.offered_price_currency || 'USD';
-      html += `<p><strong>Our Offered Price:</strong> ${cur} ${inquiry.offered_price.toLocaleString()}</p>`;
+  const generateBody = (emailMode: 'price' | 'coa' | 'general') => {
+    const salutation = `<p>Dear ${inquiry.contact_person || 'Sir/Madam'},</p>`;
+    const closing = `<p>Should you have any questions, please feel free to contact us.</p><p>Best regards,<br><strong>SA Pharma Jaya</strong></p>`;
+
+    if (emailMode === 'price') {
+      let html = salutation;
+      html += `<p>Thank you for your inquiry. Please find our price quotation for <strong>${inquiry.product_name}</strong> below:</p>`;
+      if (inquiry.specification) html += `<p><strong>Specification:</strong> ${inquiry.specification}</p>`;
+      html += `<p><strong>Quantity Required:</strong> ${inquiry.quantity}</p>`;
+      if (inquiry.offered_price && inquiry.offered_price > 0) {
+        const cur = inquiry.offered_price_currency || 'USD';
+        html += `<p><strong>Our Offered Price:</strong> ${cur} ${inquiry.offered_price.toLocaleString()} / kg</p>`;
+      } else {
+        html += `<p><strong>Our Price:</strong> To be confirmed — please contact us for pricing details.</p>`;
+      }
+      if (inquiry.supplier_name) {
+        html += `<p><strong>Origin:</strong> ${inquiry.supplier_name}${inquiry.supplier_country ? `, ${inquiry.supplier_country}` : ''}</p>`;
+      }
+      html += `<p>Please note that prices are subject to change based on availability and market conditions.</p>`;
+      html += closing;
+      setBody(html);
+    } else if (emailMode === 'coa') {
+      let html = salutation;
+      html += `<p>Further to your inquiry for <strong>${inquiry.product_name}</strong>, please find attached the requested documents (COA / MSDS).</p>`;
+      if (inquiry.specification) html += `<p><strong>Specification:</strong> ${inquiry.specification}</p>`;
+      html += `<p>Kindly review the documents and let us know if you require any further information or alternative grades.</p>`;
+      html += closing;
+      setBody(html);
+    } else {
+      let html = salutation;
+      html += `<p>Thank you for your inquiry regarding <strong>${inquiry.product_name}</strong>.</p>`;
+      if (inquiry.specification) html += `<p><strong>Specification:</strong> ${inquiry.specification}</p>`;
+      html += `<p><strong>Quantity:</strong> ${inquiry.quantity}</p>`;
+      html += `<p>Please find the attached documents for your reference.</p>`;
+      html += closing;
+      setBody(html);
     }
-    if (inquiry.supplier_name) {
-      html += `<p><strong>Origin:</strong> ${inquiry.supplier_name}${inquiry.supplier_country ? `, ${inquiry.supplier_country}` : ''}</p>`;
-    }
-    html += `<p>Please find the attached documents for your reference.</p><p>Should you have any questions, please feel free to contact us.</p><p>Best regards,<br>${currentUserName || 'SA Pharma Jaya'}</p>`;
-    setBody(html);
   };
 
   const applyTemplate = (template: EmailTemplate) => {
@@ -204,7 +228,6 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
       alert('Please fill in To, Subject, and Body.');
       return;
     }
-
     if (!gmailConnected) {
       alert('Gmail is not connected. Please connect your Gmail account in Settings > Gmail Settings.');
       return;
@@ -215,7 +238,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      // Upload attachments first
+      // Upload attachments
       const uploadedUrls: string[] = [];
       for (const att of attachments) {
         const filePath = `email-attachments/${user.id}/${Date.now()}_${att.name}`;
@@ -225,7 +248,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
 
       const toList = [toEmail.trim(), ...(ccEmail ? ccEmail.split(',').map(e => e.trim()).filter(Boolean) : [])];
 
-      // Send via Gmail API through edge function
+      // Send via Gmail API
       const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-bulk-email', {
         body: {
           userId: user.id,
@@ -241,7 +264,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
         throw new Error(fnData?.error || fnErr?.message || 'Failed to send email');
       }
 
-      // Log the sent email to DB
+      // Log to DB
       await supabase.from('crm_email_activities').insert([{
         inquiry_id: inquiry.id,
         email_type: 'sent',
@@ -258,12 +281,11 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
 
       // Auto-update inquiry status
       const updateData: Record<string, unknown> = {};
-      const lowerSubject = subject.toLowerCase();
-      if (lowerSubject.includes('price') || lowerSubject.includes('quote') || lowerSubject.includes('harga')) {
+      if (mode === 'price') {
         updateData.price_quoted = true;
         updateData.price_quoted_date = new Date().toISOString().split('T')[0];
         updateData.status = 'price_quoted';
-      } else if (lowerSubject.includes('coa') || lowerSubject.includes('msds')) {
+      } else if (mode === 'coa') {
         updateData.coa_sent = true;
         updateData.coa_sent_date = new Date().toISOString().split('T')[0];
       }
@@ -282,23 +304,33 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
 
   if (!isOpen) return null;
 
+  const modeLabel = mode === 'price' ? 'Send Price Quotation' : mode === 'coa' ? 'Send COA / MSDS' : 'New Message';
+
   const windowCls = fullscreen
     ? 'fixed inset-4 z-50 flex flex-col bg-white rounded-xl shadow-2xl border border-gray-200'
-    : 'fixed bottom-0 right-6 z-50 flex flex-col bg-white rounded-t-xl shadow-2xl border border-gray-200 w-[560px]';
+    : 'fixed bottom-0 right-6 z-50 flex flex-col bg-white rounded-t-xl shadow-2xl border border-gray-200 w-[580px]';
 
   return (
     <>
-      {/* Backdrop for fullscreen */}
       {fullscreen && <div className="fixed inset-0 bg-black/30 z-40" onClick={onClose} />}
 
-      <div className={windowCls} style={!fullscreen ? { maxHeight: minimized ? 'auto' : '85vh' } : {}}>
+      <div className={windowCls} style={!fullscreen ? { maxHeight: minimized ? 'auto' : '88vh' } : {}}>
         {/* Gmail-style dark header */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-gray-800 rounded-t-xl cursor-pointer select-none"
-          onClick={() => !fullscreen && setMinimized(m => !m)}>
-          <span className="text-sm font-medium text-white truncate">
-            {subject || 'New Message'}
-          </span>
-          <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+        <div
+          className="flex items-center justify-between px-4 py-2.5 bg-gray-800 rounded-t-xl cursor-pointer select-none"
+          onClick={() => !fullscreen && setMinimized(m => !m)}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-medium text-white truncate">
+              {minimized ? (subject || modeLabel) : modeLabel}
+            </span>
+            {!minimized && mode !== 'general' && (
+              <span className="shrink-0 text-xs px-1.5 py-0.5 rounded bg-gray-600 text-gray-200">
+                {inquiry.company_name}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
             {templates.length > 0 && !minimized && (
               <button
                 onClick={() => setShowTemplates(s => !s)}
@@ -332,14 +364,13 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
           </div>
         </div>
 
-        {/* Body — hidden when minimized */}
         {!minimized && (
           <div className="flex flex-col flex-1 overflow-hidden">
             {/* Gmail not connected warning */}
             {gmailConnected === false && (
               <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                Gmail not connected — emails won't be sent. Go to Settings &gt; Gmail Settings to connect.
+                Gmail not connected — go to Settings &gt; Gmail Settings to connect before sending.
               </div>
             )}
 
@@ -363,7 +394,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
             <div className="border-b border-gray-100">
               {/* To */}
               <div className="flex items-center px-4 py-1.5 border-b border-gray-100">
-                <span className="text-sm text-gray-500 w-8 shrink-0">To</span>
+                <span className="text-xs text-gray-500 w-8 shrink-0">To</span>
                 <input
                   type="email"
                   value={toEmail}
@@ -371,16 +402,15 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
                   className="flex-1 text-sm outline-none py-1 text-gray-900 placeholder-gray-400"
                   placeholder="Recipients"
                 />
-                <div className="flex gap-2 ml-2">
+                <div className="flex gap-2 ml-2 shrink-0">
                   <button onClick={() => setShowCc(s => !s)} className="text-xs text-gray-500 hover:text-gray-700">Cc</button>
                   <button onClick={() => setShowBcc(s => !s)} className="text-xs text-gray-500 hover:text-gray-700">Bcc</button>
                 </div>
               </div>
 
-              {/* Cc */}
               {showCc && (
                 <div className="flex items-center px-4 py-1.5 border-b border-gray-100">
-                  <span className="text-sm text-gray-500 w-8 shrink-0">Cc</span>
+                  <span className="text-xs text-gray-500 w-8 shrink-0">Cc</span>
                   <input
                     type="text"
                     value={ccEmail}
@@ -391,10 +421,9 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
                 </div>
               )}
 
-              {/* Bcc */}
               {showBcc && (
                 <div className="flex items-center px-4 py-1.5 border-b border-gray-100">
-                  <span className="text-sm text-gray-500 w-8 shrink-0">Bcc</span>
+                  <span className="text-xs text-gray-500 w-8 shrink-0">Bcc</span>
                   <input
                     type="text"
                     value={bccEmail}
@@ -405,27 +434,27 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
                 </div>
               )}
 
-              {/* Subject */}
+              {/* Subject — editable but pre-filled with Re: {mail_subject} */}
               <div className="flex items-center px-4 py-1.5">
                 <input
                   type="text"
                   value={subject}
                   onChange={e => setSubject(e.target.value)}
-                  className="flex-1 text-sm outline-none py-1 text-gray-900 placeholder-gray-400"
+                  className="flex-1 text-sm outline-none py-1 text-gray-900 placeholder-gray-400 font-medium"
                   placeholder="Subject"
                 />
               </div>
             </div>
 
             {/* Rich text body */}
-            <div className="flex-1 overflow-y-auto" style={{ minHeight: fullscreen ? 300 : 220 }}>
+            <div className="flex-1 overflow-y-auto" style={{ minHeight: fullscreen ? 300 : 240 }}>
               <ReactQuill
                 theme="snow"
                 value={body}
                 onChange={setBody}
                 modules={quillModules}
                 formats={quillFormats}
-                style={{ height: fullscreen ? '100%' : 220, border: 'none' }}
+                style={{ height: fullscreen ? '100%' : 240, border: 'none' }}
                 className="crm-quill-composer"
               />
             </div>
@@ -452,7 +481,9 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
                 disabled={sending || !toEmail.trim() || !subject.trim()}
                 className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-full hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {sending ? <><Loader className="w-4 h-4 animate-spin" />Sending...</> : <><Send className="w-4 h-4" />Send</>}
+                {sending
+                  ? <><Loader className="w-4 h-4 animate-spin" />Sending...</>
+                  : <><Send className="w-4 h-4" />Send</>}
               </button>
 
               <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
@@ -465,7 +496,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
               </button>
 
               <div className="ml-auto text-xs text-gray-400 truncate">
-                {inquiry.inquiry_number} · {inquiry.company_name}
+                {inquiry.inquiry_number} · {inquiry.product_name}
               </div>
             </div>
           </div>
@@ -475,8 +506,8 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, replyTo }: GmailLi
       <style>{`
         .crm-quill-composer .ql-container { border: none !important; font-size: 14px; }
         .crm-quill-composer .ql-toolbar { border: none !important; border-bottom: 1px solid #f1f5f9 !important; padding: 6px 12px; }
-        .crm-quill-composer .ql-editor { padding: 12px 16px; min-height: 180px; }
-        .crm-quill-composer .ql-editor p { margin-bottom: 4px; }
+        .crm-quill-composer .ql-editor { padding: 12px 16px; min-height: 200px; }
+        .crm-quill-composer .ql-editor p { margin-bottom: 6px; }
       `}</style>
     </>
   );
