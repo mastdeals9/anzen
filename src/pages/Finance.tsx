@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, lazy, Suspense, Component, ReactNode } from 'react';
+import { useEffect, useState, useMemo, lazy, Suspense } from 'react';
 import { Layout } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -94,42 +94,11 @@ const getFinanceMenu = (t: Record<string, Record<string, string>>): MenuGroup[] 
   }
 ];
 
-class ModuleErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
-            <p className="text-red-800 font-semibold mb-2">Failed to load this section</p>
-            <p className="text-red-600 text-sm mb-4">Please refresh the page to try again.</p>
-            <button
-              onClick={() => this.setState({ hasError: false, error: null })}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 function FinanceContent() {
   const { profile } = useAuth();
   const { t } = useLanguage();
   const { dateRange } = useFinance();
-  const [activeTab, setActiveTab] = useState<FinanceTab>(() => {
-    try { return (localStorage.getItem('finance_active_tab') as FinanceTab) || 'purchase'; } catch { return 'purchase'; }
-  });
+  const [activeTab, setActiveTab] = useState<FinanceTab>('purchase');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isMobile);
@@ -217,7 +186,7 @@ function FinanceContent() {
       case 'receipt':
         return <ReceiptVoucherManager canManage={canManage} />;
       case 'payment':
-        return <PaymentVoucherManager canManage={canManage} prefillInvoice={payInvoice} onPrefillConsumed={() => setPayInvoice(null)} />;
+        return <PaymentVoucherManager canManage={canManage} prefillInvoice={payInvoice} onPrefillConsumed={() => setPayInvoice(null)} onViewInvoice={() => setActiveTab('purchase')} />;
       case 'journal':
         return <GeneralJournalEntry
           canManage={canManage}
@@ -309,7 +278,6 @@ function FinanceContent() {
                             key={item.id}
                             onClick={() => {
                               setActiveTab(item.id);
-                              try { localStorage.setItem('finance_active_tab', item.id); } catch {}
                               if (window.innerWidth < 768) setSidebarCollapsed(true);
                             }}
                             className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
@@ -359,15 +327,13 @@ function FinanceContent() {
           {/* Content Area - Pure White Background */}
           <div className="flex-1 overflow-auto bg-white">
             <div className="p-3 md:p-6">
-              <ModuleErrorBoundary>
-                <Suspense fallback={
-                  <div className="flex items-center justify-center py-12">
-                    <Loader className="w-6 h-6 animate-spin text-blue-600" />
-                  </div>
-                }>
-                  {renderContent()}
-                </Suspense>
-              </ModuleErrorBoundary>
+              <Suspense fallback={
+                <div className="flex items-center justify-center py-12">
+                  <Loader className="w-6 h-6 animate-spin text-blue-600" />
+                </div>
+              }>
+                {renderContent()}
+              </Suspense>
             </div>
           </div>
         </div>
