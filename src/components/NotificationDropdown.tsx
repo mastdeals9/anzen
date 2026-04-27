@@ -16,13 +16,35 @@ interface Notification {
   created_at: string;
 }
 
+// Persists across sessions in localStorage — stores notification IDs that have
+// already triggered a toast so they never toast again, even after re-login.
+function getToastedIds(userId: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(`toasted_notif_${userId}`);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function addToastedIds(userId: string, ids: string[]) {
+  if (!ids.length) return;
+  try {
+    const existing = getToastedIds(userId);
+    ids.forEach(id => existing.add(id));
+    // Keep max 500 IDs to avoid unbounded localStorage growth
+    const trimmed = [...existing].slice(-500);
+    localStorage.setItem(`toasted_notif_${userId}`, JSON.stringify(trimmed));
+  } catch {
+    // localStorage unavailable — silently ignore
+  }
+}
+
 export function NotificationDropdown() {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const { user } = useAuth();
-  const previousNotificationIds = useRef<Set<string>>(new Set());
-  const toastsShownRef = useRef(false);
 
   useEffect(() => {
     if (user) {
@@ -34,22 +56,13 @@ export function NotificationDropdown() {
 
   const loadNotifications = async () => {
     try {
-      // Fetch user's last mark-all-read timestamp
-      const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('notifications_read_at')
-        .eq('id', user?.id)
-        .maybeSingle();
-
-      const lastReadAt = profile?.notifications_read_at ?? null;
-
       const { data, error } = await supabase
         .from('notifications')
         .select('*')
         .eq('user_id', user?.id)
         .eq('is_read', false)
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(20);
 
       if (error) throw error;
 
@@ -57,25 +70,19 @@ export function NotificationDropdown() {
       setNotifications(newNotifications);
       setUnreadCount(newNotifications.length);
 
-      // Only show toasts once per mount, and only for notifications newer than last mark-all-read
-      if (!toastsShownRef.current) {
-        toastsShownRef.current = true;
-        newNotifications.forEach(notif => {
-          if (previousNotificationIds.current.has(notif.id)) return;
-          previousNotificationIds.current.add(notif.id);
-
-          // Skip if this notification existed before the user last marked all as read
-          if (lastReadAt && notif.created_at <= lastReadAt) return;
-
-          if (notif.type === 'appointment') {
-            showToast({ type: 'appointment', title: notif.title, message: notif.message, duration: 8000 });
-          } else {
-            showToast({ type: 'info', title: notif.title, message: notif.message, duration: 6000 });
-          }
-        });
-      } else {
-        newNotifications.forEach(notif => previousNotificationIds.current.add(notif.id));
-      }
+      // Show toasts only for IDs that have never been toasted before (persists across logins)
+      const toasted = getToastedIds(user!.id);
+      const newIds: string[] = [];
+      newNotifications.forEach(notif => {
+        if (toasted.has(notif.id)) return;
+        newIds.push(notif.id);
+        if (notif.type === 'appointment') {
+          showToast({ type: 'appointment', title: notif.title, message: notif.message, duration: 8000 });
+        } else {
+          showToast({ type: 'info', title: notif.title, message: notif.message, duration: 6000 });
+        }
+      });
+      addToastedIds(user!.id, newIds);
     } catch (error) {
       console.error('Error loading notifications:', error);
     }
@@ -89,7 +96,7 @@ export function NotificationDropdown() {
         .eq('user_id', user?.id)
         .eq('is_read', false)
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(20);
 
       if (error) throw error;
 
@@ -97,17 +104,19 @@ export function NotificationDropdown() {
       setNotifications(newNotifications);
       setUnreadCount(newNotifications.length);
 
-      // Show toasts only for genuinely new notifications (not seen before)
+      // Same logic: only toast IDs not yet seen
+      const toasted = getToastedIds(user!.id);
+      const newIds: string[] = [];
       newNotifications.forEach(notif => {
-        if (!previousNotificationIds.current.has(notif.id)) {
-          previousNotificationIds.current.add(notif.id);
-          if (notif.type === 'appointment') {
-            showToast({ type: 'appointment', title: notif.title, message: notif.message, duration: 8000 });
-          } else {
-            showToast({ type: 'info', title: notif.title, message: notif.message, duration: 6000 });
-          }
+        if (toasted.has(notif.id)) return;
+        newIds.push(notif.id);
+        if (notif.type === 'appointment') {
+          showToast({ type: 'appointment', title: notif.title, message: notif.message, duration: 8000 });
+        } else {
+          showToast({ type: 'info', title: notif.title, message: notif.message, duration: 6000 });
         }
       });
+      addToastedIds(user!.id, newIds);
     } catch (error) {
       console.error('Error loading notifications (polling):', error);
     }
@@ -121,6 +130,7 @@ export function NotificationDropdown() {
         .eq('id', notificationId);
 
       if (error) throw error;
+      addToastedIds(user!.id, [notificationId]);
       setNotifications(prev => prev.filter(n => n.id !== notificationId));
       setUnreadCount(prev => Math.max(0, prev - 1));
     } catch (error) {
@@ -131,22 +141,18 @@ export function NotificationDropdown() {
   const markAllAsRead = async () => {
     try {
       const now = new Date().toISOString();
+      const currentIds = notifications.map(n => n.id);
 
-      const [notifRes, profileRes] = await Promise.all([
-        supabase
-          .from('notifications')
-          .update({ is_read: true, read_at: now })
-          .eq('user_id', user?.id)
-          .eq('is_read', false),
-        supabase
-          .from('user_profiles')
-          .update({ notifications_read_at: now })
-          .eq('id', user?.id),
-      ]);
+      const { error } = await supabase
+        .from('notifications')
+        .update({ is_read: true, read_at: now })
+        .eq('user_id', user?.id)
+        .eq('is_read', false);
 
-      if (notifRes.error) throw notifRes.error;
-      if (profileRes.error) throw profileRes.error;
+      if (error) throw error;
 
+      // Persist all current IDs so they never toast again
+      addToastedIds(user!.id, currentIds);
       setNotifications([]);
       setUnreadCount(0);
     } catch (error) {

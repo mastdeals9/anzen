@@ -65,20 +65,17 @@ export async function checkAndCreateLowStockNotifications() {
         .in('role', ['admin', 'warehouse']);
 
       if (users) {
-        // Only create once per day — check if already created today
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-
         for (const user of users) {
-          const { data: existingToday } = await supabase
+          // Skip if there's already an unread low_stock notification
+          const { data: existingUnread } = await supabase
             .from('notifications')
             .select('id')
             .eq('user_id', user.id)
             .eq('type', 'low_stock')
-            .gte('created_at', todayStart.toISOString())
+            .eq('is_read', false)
             .limit(1);
 
-          if (!existingToday?.length) {
+          if (!existingUnread?.length) {
             await createNotification({
               userId: user.id,
               type: 'low_stock',
@@ -122,20 +119,16 @@ export async function checkAndCreateExpiryNotifications() {
         .in('role', ['admin', 'warehouse', 'sales']);
 
       if (users) {
-        // Only create once per day — check if already created today
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-
         for (const user of users) {
-          const { data: existingToday } = await supabase
+          const { data: existingUnread } = await supabase
             .from('notifications')
             .select('id')
             .eq('user_id', user.id)
             .eq('type', 'near_expiry')
-            .gte('created_at', todayStart.toISOString())
+            .eq('is_read', false)
             .limit(1);
 
-          if (!existingToday?.length) {
+          if (!existingUnread?.length) {
             await createNotification({
               userId: user.id,
               type: 'near_expiry',
@@ -170,20 +163,16 @@ export async function checkAndCreateFollowUpNotifications() {
         .in('role', ['admin', 'sales']);
 
       if (users) {
-        // Only create once per day — check if already created today (was missing before!)
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-
         for (const user of users) {
-          const { data: existingToday } = await supabase
+          const { data: existingUnread } = await supabase
             .from('notifications')
             .select('id')
             .eq('user_id', user.id)
             .eq('type', 'follow_up')
-            .gte('created_at', todayStart.toISOString())
+            .eq('is_read', false)
             .limit(1);
 
-          if (!existingToday?.length) {
+          if (!existingUnread?.length) {
             await createNotification({
               userId: user.id,
               type: 'follow_up',
