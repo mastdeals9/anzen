@@ -8,18 +8,7 @@ import { TodaysActionsDashboard } from '../components/commandCenter/TodaysAction
 import { RevenueChart } from '../components/dashboard/RevenueChart';
 import { SalesPipelineChart } from '../components/dashboard/SalesPipelineChart';
 import { PaymentOverview } from '../components/dashboard/PaymentOverview';
-import {
-  AlertTriangle,
-  Clock,
-  TrendingUp,
-  FileText,
-  ClipboardCheck,
-  ClipboardList,
-  Zap,
-  UserCircle,
-  ArrowRight,
-  Sparkles,
-} from 'lucide-react';
+import { AlertTriangle, Clock, TrendingUp, FileText, ClipboardCheck, ClipboardList, Zap, CircleUser as UserCircle, ArrowRight, Sparkles } from 'lucide-react';
 
 interface DashboardStats {
   totalProducts: number;
@@ -32,6 +21,8 @@ interface DashboardStats {
   pendingFollowUps: number;
   pendingSalesOrders: number;
   pendingDeliveryChallans: number;
+  pendingExpenses: number;
+  pendingPettyCash: number;
   overdueInvoicesCount: number;
   overdueInvoicesAmount: number;
 }
@@ -51,6 +42,8 @@ export function Dashboard() {
     pendingFollowUps: 0,
     pendingSalesOrders: 0,
     pendingDeliveryChallans: 0,
+    pendingExpenses: 0,
+    pendingPettyCash: 0,
     overdueInvoicesCount: 0,
     overdueInvoicesAmount: 0,
   });
@@ -78,6 +71,8 @@ export function Dashboard() {
         activitiesResult,
         pendingSalesOrdersResult,
         pendingDCResult,
+        pendingExpensesResult,
+        pendingPettyCashResult,
         overdueInvoicesResult,
       ] = await Promise.all([
         supabase.from('products').select('id', { count: 'exact', head: true }).eq('is_active', true),
@@ -99,6 +94,14 @@ export function Dashboard() {
           .eq('status', 'pending_approval'),
         supabase
           .from('delivery_challans')
+          .select('id', { count: 'exact', head: true })
+          .eq('approval_status', 'pending_approval'),
+        supabase
+          .from('finance_expenses')
+          .select('id', { count: 'exact', head: true })
+          .eq('approval_status', 'pending_approval'),
+        supabase
+          .from('petty_cash_transactions')
           .select('id', { count: 'exact', head: true })
           .eq('approval_status', 'pending_approval'),
         supabase
@@ -146,6 +149,8 @@ export function Dashboard() {
         pendingFollowUps: activitiesResult.count || 0,
         pendingSalesOrders: pendingSalesOrdersResult.count || 0,
         pendingDeliveryChallans: pendingDCResult.count || 0,
+        pendingExpenses: pendingExpensesResult.count || 0,
+        pendingPettyCash: pendingPettyCashResult.count || 0,
         overdueInvoicesCount: overdueInvoicesResult.data?.length || 0,
         overdueInvoicesAmount: overdueAmount,
       });
@@ -184,11 +189,17 @@ export function Dashboard() {
     });
   }
   if (isAdmin || isSales) {
-    const totalApprovals = stats.pendingSalesOrders + stats.pendingDeliveryChallans;
+    const totalApprovals = stats.pendingSalesOrders + stats.pendingDeliveryChallans + stats.pendingExpenses + stats.pendingPettyCash;
+    const parts = [
+      stats.pendingSalesOrders ? `${stats.pendingSalesOrders} SO` : '',
+      stats.pendingDeliveryChallans ? `${stats.pendingDeliveryChallans} DC` : '',
+      stats.pendingExpenses ? `${stats.pendingExpenses} Exp` : '',
+      stats.pendingPettyCash ? `${stats.pendingPettyCash} PC` : '',
+    ].filter(Boolean);
     statCards.push({
       title: 'Approvals Pending',
       value: totalApprovals,
-      subtitle: `${stats.pendingSalesOrders} PO, ${stats.pendingDeliveryChallans} DC`,
+      subtitle: parts.length ? parts.join(', ') : 'All clear',
       icon: ClipboardCheck,
       color: 'yellow',
       link: 'sales-orders'

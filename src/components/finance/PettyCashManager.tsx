@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Wallet, ArrowDownCircle, ArrowUpCircle, RefreshCw, Upload, X, FileText, Image, Eye, Edit2, Trash2, ExternalLink, Download, Clipboard, DollarSign, Package, Truck, Building2 } from 'lucide-react';
+import { Plus, Wallet, ArrowDownCircle, ArrowUpCircle, RefreshCw, Upload, X, FileText, Image, Eye, CreditCard as Edit2, Trash2, ExternalLink, Download, Clipboard, DollarSign, Package, Truck, Building2, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { Modal } from '../Modal';
 import { useFinance } from '../../contexts/FinanceContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -36,6 +36,10 @@ interface PettyCashTransaction {
   import_container_id: string | null;
   delivery_challan_id: string | null;
   voucher_number: string | null;
+  approval_status: 'pending_approval' | 'approved' | 'rejected';
+  approved_by: string | null;
+  approved_at: string | null;
+  rejection_reason: string | null;
   bank_accounts?: { account_name: string; bank_name: string; alias: string | null; currency: string } | null;
   import_containers?: { container_ref: string } | null;
   delivery_challans?: { challan_number: string } | null;
@@ -299,6 +303,10 @@ const expenseCategories = [
 ];
 
 export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyCashManagerProps) {
+  const [approvalLoading, setApprovalLoading] = useState<string | null>(null);
+  const [pcRejectionModalOpen, setPcRejectionModalOpen] = useState(false);
+  const [pcRejectionTarget, setPcRejectionTarget] = useState<string | null>(null);
+  const [pcRejectionReason, setPcRejectionReason] = useState('');
   const [transactions, setTransactions] = useState<PettyCashTransaction[]>([]);
   const [containers, setContainers] = useState<ImportContainer[]>([]);
   const [challans, setChallans] = useState<DeliveryChallan[]>([]);
@@ -319,6 +327,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
 
   const { dateRange } = useFinance();
   const { profile } = useAuth();
+  const isAdmin = profile?.role === 'admin';
   const startDate = dateRange.startDate;
   const endDate = dateRange.endDate;
 
@@ -719,6 +728,43 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
     }
   };
 
+  const handleApprovePettyCash = async (id: string) => {
+    if (!isAdmin) return;
+    setApprovalLoading(id);
+    try {
+      const { error } = await supabase
+        .from('petty_cash_transactions')
+        .update({ approval_status: 'approved', approved_by: profile?.id, approved_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+      setTransactions(prev => prev.map(t => t.id === id ? { ...t, approval_status: 'approved' } : t));
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Error', message: err.message });
+    } finally {
+      setApprovalLoading(null);
+    }
+  };
+
+  const handleRejectPettyCashConfirm = async () => {
+    if (!pcRejectionTarget || !pcRejectionReason.trim()) return;
+    setApprovalLoading(pcRejectionTarget);
+    try {
+      const { error } = await supabase
+        .from('petty_cash_transactions')
+        .update({ approval_status: 'rejected', approved_by: profile?.id, approved_at: new Date().toISOString(), rejection_reason: pcRejectionReason })
+        .eq('id', pcRejectionTarget);
+      if (error) throw error;
+      setTransactions(prev => prev.map(t => t.id === pcRejectionTarget ? { ...t, approval_status: 'rejected', rejection_reason: pcRejectionReason } : t));
+      setPcRejectionModalOpen(false);
+      setPcRejectionTarget(null);
+      setPcRejectionReason('');
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Error', message: err.message });
+    } finally {
+      setApprovalLoading(null);
+    }
+  };
+
   const exportToCSV = () => {
     if (filteredTransactions.length === 0) {
       showToast({ type: 'info', title: 'Notice', message: 'No transactions to export' });
@@ -955,19 +1001,20 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
                   )}
                 </div>
               </th>
+              <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Approval</th>
               {canManage && <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={canManage ? 8 : 7} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={canManage ? 9 : 8} className="px-6 py-8 text-center text-gray-500">
                   Loading...
                 </td>
               </tr>
             ) : filteredTransactions.length === 0 ? (
               <tr>
-                <td colSpan={canManage ? 8 : 7} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={canManage ? 9 : 8} className="px-6 py-8 text-center text-gray-500">
                   No transactions found
                 </td>
               </tr>
@@ -1047,6 +1094,21 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
                         Rp {Number(tx.amount).toLocaleString()}
                       </span>
                     </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-center">
+                      {tx.approval_status === 'approved' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 rounded-full">
+                          <CheckCircle className="w-3 h-3" />Approved
+                        </span>
+                      ) : tx.approval_status === 'rejected' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-full" title={tx.rejection_reason || ''}>
+                          <XCircle className="w-3 h-3" />Rejected
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-full">
+                          <Clock className="w-3 h-3" />Pending
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right text-sm">
                       <div className="flex items-center justify-end gap-2">
                         <button
@@ -1056,6 +1118,26 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
                         >
                           <Eye className="h-4 w-4" />
                         </button>
+                        {isAdmin && tx.approval_status === 'pending_approval' && (
+                          <>
+                            <button
+                              onClick={() => handleApprovePettyCash(tx.id)}
+                              disabled={approvalLoading === tx.id}
+                              className="text-green-600 hover:text-green-900 disabled:opacity-50"
+                              title="Approve"
+                            >
+                              <CheckCircle className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => { setPcRejectionTarget(tx.id); setPcRejectionModalOpen(true); }}
+                              disabled={approvalLoading === tx.id}
+                              className="text-red-600 hover:text-red-900 disabled:opacity-50"
+                              title="Reject"
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </button>
+                          </>
+                        )}
                         {canManage && (
                           <>
                             <button
@@ -1628,6 +1710,32 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
           </div>
         </div>
       </div>
+
+      {/* Petty cash rejection modal */}
+      {pcRejectionModalOpen && (
+        <Modal isOpen={pcRejectionModalOpen} onClose={() => { setPcRejectionModalOpen(false); setPcRejectionReason(''); }} title="Reject Petty Cash Entry">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">Please provide a reason for rejecting this petty cash entry.</p>
+            <textarea
+              value={pcRejectionReason}
+              onChange={e => setPcRejectionReason(e.target.value)}
+              rows={3}
+              placeholder="Reason for rejection..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => { setPcRejectionModalOpen(false); setPcRejectionReason(''); }} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button
+                onClick={handleRejectPettyCashConfirm}
+                disabled={!pcRejectionReason.trim() || !!approvalLoading}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

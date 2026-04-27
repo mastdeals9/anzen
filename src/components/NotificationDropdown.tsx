@@ -22,19 +22,66 @@ export function NotificationDropdown() {
   const [unreadCount, setUnreadCount] = useState(0);
   const { user } = useAuth();
   const previousNotificationIds = useRef<Set<string>>(new Set());
-  const sessionKey = `notification_session_${user?.id}`;
+  const toastsShownRef = useRef(false);
 
   useEffect(() => {
     if (user) {
-      const hasShownThisSession = sessionStorage.getItem(sessionKey);
-      loadNotifications(!hasShownThisSession);
-
-      const interval = setInterval(() => loadNotifications(false), 60000);
+      loadNotifications();
+      const interval = setInterval(() => loadNotificationsPolling(), 60000);
       return () => clearInterval(interval);
     }
   }, [user]);
 
-  const loadNotifications = async (showToasts: boolean = false) => {
+  const loadNotifications = async () => {
+    try {
+      // Fetch user's last mark-all-read timestamp
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('notifications_read_at')
+        .eq('id', user?.id)
+        .maybeSingle();
+
+      const lastReadAt = profile?.notifications_read_at ?? null;
+
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', user?.id)
+        .eq('is_read', false)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+
+      const newNotifications = data || [];
+      setNotifications(newNotifications);
+      setUnreadCount(newNotifications.length);
+
+      // Only show toasts once per mount, and only for notifications newer than last mark-all-read
+      if (!toastsShownRef.current) {
+        toastsShownRef.current = true;
+        newNotifications.forEach(notif => {
+          if (previousNotificationIds.current.has(notif.id)) return;
+          previousNotificationIds.current.add(notif.id);
+
+          // Skip if this notification existed before the user last marked all as read
+          if (lastReadAt && notif.created_at <= lastReadAt) return;
+
+          if (notif.type === 'appointment') {
+            showToast({ type: 'appointment', title: notif.title, message: notif.message, duration: 8000 });
+          } else {
+            showToast({ type: 'info', title: notif.title, message: notif.message, duration: 6000 });
+          }
+        });
+      } else {
+        newNotifications.forEach(notif => previousNotificationIds.current.add(notif.id));
+      }
+    } catch (error) {
+      console.error('Error loading notifications:', error);
+    }
+  };
+
+  const loadNotificationsPolling = async () => {
     try {
       const { data, error } = await supabase
         .from('notifications')
@@ -48,37 +95,21 @@ export function NotificationDropdown() {
 
       const newNotifications = data || [];
       setNotifications(newNotifications);
-      setUnreadCount(newNotifications.length || 0);
+      setUnreadCount(newNotifications.length);
 
-      if (showToasts) {
-        sessionStorage.setItem(sessionKey, 'true');
-        newNotifications.forEach(notif => {
-          if (!notif.is_read && !previousNotificationIds.current.has(notif.id)) {
-            if (notif.type === 'appointment') {
-              showToast({
-                type: 'appointment',
-                title: notif.title,
-                message: notif.message,
-                duration: 8000
-              });
-            } else {
-              showToast({
-                type: 'info',
-                title: notif.title,
-                message: notif.message,
-                duration: 6000
-              });
-            }
+      // Show toasts only for genuinely new notifications (not seen before)
+      newNotifications.forEach(notif => {
+        if (!previousNotificationIds.current.has(notif.id)) {
+          previousNotificationIds.current.add(notif.id);
+          if (notif.type === 'appointment') {
+            showToast({ type: 'appointment', title: notif.title, message: notif.message, duration: 8000 });
+          } else {
+            showToast({ type: 'info', title: notif.title, message: notif.message, duration: 6000 });
           }
-          previousNotificationIds.current.add(notif.id);
-        });
-      } else {
-        newNotifications.forEach(notif => {
-          previousNotificationIds.current.add(notif.id);
-        });
-      }
+        }
+      });
     } catch (error) {
-      console.error('Error loading notifications:', error);
+      console.error('Error loading notifications (polling):', error);
     }
   };
 
@@ -90,7 +121,8 @@ export function NotificationDropdown() {
         .eq('id', notificationId);
 
       if (error) throw error;
-      loadNotifications();
+      setNotifications(prev => prev.filter(n => n.id !== notificationId));
+      setUnreadCount(prev => Math.max(0, prev - 1));
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
@@ -98,14 +130,25 @@ export function NotificationDropdown() {
 
   const markAllAsRead = async () => {
     try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: true, read_at: new Date().toISOString() })
-        .eq('user_id', user?.id)
-        .eq('is_read', false);
+      const now = new Date().toISOString();
 
-      if (error) throw error;
-      loadNotifications();
+      const [notifRes, profileRes] = await Promise.all([
+        supabase
+          .from('notifications')
+          .update({ is_read: true, read_at: now })
+          .eq('user_id', user?.id)
+          .eq('is_read', false),
+        supabase
+          .from('user_profiles')
+          .update({ notifications_read_at: now })
+          .eq('id', user?.id),
+      ]);
+
+      if (notifRes.error) throw notifRes.error;
+      if (profileRes.error) throw profileRes.error;
+
+      setNotifications([]);
+      setUnreadCount(0);
     } catch (error) {
       console.error('Error marking all as read:', error);
     }

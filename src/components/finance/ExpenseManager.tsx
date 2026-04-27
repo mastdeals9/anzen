@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, DollarSign, Package, Truck, Building2, CreditCard as Edit, Trash2, FileText, Upload, X, ExternalLink, Download, Eye } from 'lucide-react';
+import { Plus, DollarSign, Package, Truck, Building2, CreditCard as Edit, Trash2, FileText, Upload, X, ExternalLink, Download, Eye, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { Modal } from '../Modal';
 import { useFinance } from '../../contexts/FinanceContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { getFinancialYear } from '../../utils/dateFormat';
 
 interface FinanceExpense {
@@ -20,6 +21,10 @@ interface FinanceExpense {
   bank_account_id: string | null;
   payment_reference: string | null;
   voucher_number: string | null;
+  approval_status: 'pending_approval' | 'approved' | 'rejected';
+  approved_by: string | null;
+  approved_at: string | null;
+  rejection_reason: string | null;
   created_at: string;
   batches?: { batch_number: string } | null;
   import_containers?: { container_ref: string } | null;
@@ -287,6 +292,12 @@ const expenseCategories = [
 ];
 
 export function ExpenseManager({ canManage }: ExpenseManagerProps) {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === 'admin';
+  const [rejectionModalOpen, setRejectionModalOpen] = useState(false);
+  const [rejectionTarget, setRejectionTarget] = useState<{ id: string; type: 'expense' } | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [approvalLoading, setApprovalLoading] = useState<string | null>(null);
   const [expenses, setExpenses] = useState<FinanceExpense[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [containers, setContainers] = useState<ImportContainer[]>([]);
@@ -873,6 +884,43 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
   };
 
 
+  const handleApproveExpense = async (id: string) => {
+    if (!isAdmin) return;
+    setApprovalLoading(id);
+    try {
+      const { error } = await supabase
+        .from('finance_expenses')
+        .update({ approval_status: 'approved', approved_by: profile?.id, approved_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw error;
+      setExpenses(prev => prev.map(e => e.id === id ? { ...e, approval_status: 'approved', approved_by: profile?.id ?? null, approved_at: new Date().toISOString() } : e));
+    } catch (err: any) {
+      alert('Failed to approve: ' + err.message);
+    } finally {
+      setApprovalLoading(null);
+    }
+  };
+
+  const handleRejectExpenseConfirm = async () => {
+    if (!rejectionTarget || !rejectionReason.trim()) return;
+    setApprovalLoading(rejectionTarget.id);
+    try {
+      const { error } = await supabase
+        .from('finance_expenses')
+        .update({ approval_status: 'rejected', approved_by: profile?.id, approved_at: new Date().toISOString(), rejection_reason: rejectionReason })
+        .eq('id', rejectionTarget.id);
+      if (error) throw error;
+      setExpenses(prev => prev.map(e => e.id === rejectionTarget.id ? { ...e, approval_status: 'rejected', rejection_reason: rejectionReason } : e));
+      setRejectionModalOpen(false);
+      setRejectionTarget(null);
+      setRejectionReason('');
+    } catch (err: any) {
+      alert('Failed to reject: ' + err.message);
+    } finally {
+      setApprovalLoading(null);
+    }
+  };
+
   const handleUnlinkFromBankStatement = async (expenseId: string) => {
     if (!confirm(
       'Are you sure you want to unlink this expense from the bank statement?\n\n' +
@@ -1293,19 +1341,20 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                   )}
                 </div>
               </th>
+              <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Approval</th>
               {canManage && <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={canManage ? 10 : 9} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={canManage ? 11 : 10} className="px-6 py-8 text-center text-gray-500">
                   Loading...
                 </td>
               </tr>
             ) : filteredExpenses.length === 0 ? (
               <tr>
-                <td colSpan={canManage ? 9 : 8} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={canManage ? 10 : 9} className="px-6 py-8 text-center text-gray-500">
                   No expenses found
                 </td>
               </tr>
@@ -1402,6 +1451,21 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                         </span>
                       )}
                     </td>
+                    <td className="px-4 py-2.5 whitespace-nowrap text-center">
+                      {expense.approval_status === 'approved' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 rounded-full">
+                          <CheckCircle className="w-3 h-3" />Approved
+                        </span>
+                      ) : expense.approval_status === 'rejected' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-full" title={expense.rejection_reason || ''}>
+                          <XCircle className="w-3 h-3" />Rejected
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-full">
+                          <Clock className="w-3 h-3" />Pending
+                        </span>
+                      )}
+                    </td>
                     {canManage && (
                       <td className="px-4 py-2.5 whitespace-nowrap text-center">
                         <div className="flex items-center justify-center gap-1.5">
@@ -1415,6 +1479,26 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
+                          {isAdmin && expense.approval_status === 'pending_approval' && (
+                            <>
+                              <button
+                                onClick={() => handleApproveExpense(expense.id)}
+                                disabled={approvalLoading === expense.id}
+                                className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors disabled:opacity-50"
+                                title="Approve"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => { setRejectionTarget({ id: expense.id, type: 'expense' }); setRejectionModalOpen(true); }}
+                                disabled={approvalLoading === expense.id}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                                title="Reject"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
                           <button
                             onClick={() => handleEdit(expense)}
                             className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
@@ -1445,7 +1529,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 <td className="px-4 py-2.5 text-right text-sm text-blue-900 font-bold">
                   Rp {sortedExpenses.reduce((sum, exp) => sum + exp.amount, 0).toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                 </td>
-                <td colSpan={canManage ? 4 : 3}></td>
+                <td colSpan={canManage ? 5 : 4}></td>
               </tr>
             )}
           </tbody>
@@ -2130,6 +2214,32 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Rejection reason modal */}
+      {rejectionModalOpen && (
+        <Modal isOpen={rejectionModalOpen} onClose={() => { setRejectionModalOpen(false); setRejectionReason(''); }} title="Reject Expense" maxWidth="max-w-md">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">Please provide a reason for rejecting this expense entry.</p>
+            <textarea
+              value={rejectionReason}
+              onChange={e => setRejectionReason(e.target.value)}
+              rows={3}
+              placeholder="Reason for rejection..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => { setRejectionModalOpen(false); setRejectionReason(''); }} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button
+                onClick={handleRejectExpenseConfirm}
+                disabled={!rejectionReason.trim() || !!approvalLoading}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                Reject
               </button>
             </div>
           </div>
