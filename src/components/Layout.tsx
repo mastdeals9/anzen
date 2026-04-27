@@ -5,7 +5,12 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { useFinance } from '../contexts/FinanceContext';
 import { NotificationDropdown } from './NotificationDropdown';
 import { formatDate } from '../utils/dateFormat';
-import { LayoutDashboard, Package, Boxes, Warehouse, Users, CircleUser as UserCircle, ShoppingCart, DollarSign, Settings, LogOut, Menu, X, Globe, Truck, Zap, CheckSquare, FileText, TrendingUp, ClipboardList, Calendar, Calculator } from 'lucide-react';
+import {
+  LayoutDashboard, Package, Boxes, Warehouse, Users, CircleUser as UserCircle,
+  ShoppingCart, DollarSign, Settings, LogOut, Menu, X, Globe, Truck, Zap,
+  CheckSquare, FileText, TrendingUp, ClipboardList, Calendar, Calculator,
+  BarChart2,
+} from 'lucide-react';
 import logo from '../assets/Untitled-1.svg';
 
 export interface Quote {
@@ -43,7 +48,7 @@ export const fallbackQuotes: Quote[] = [
   { content: "Action is the foundational key to all success.", author: "Pablo Picasso" },
   { content: "Your limitation—it's only your imagination.", author: "Unknown" },
   { content: "Push yourself, because no one else is going to do it for you.", author: "Unknown" },
-  { content: "Sometimes later becomes never. Do it now.", author: "Unknown" }
+  { content: "Sometimes later becomes never. Do it now.", author: "Unknown" },
 ];
 
 export const getRandomFallbackQuote = (): Quote => {
@@ -55,10 +60,34 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
+interface MenuItem {
+  id: string;
+  label: string;
+  icon: React.ElementType;
+}
+
+interface MenuGroup {
+  label: string;
+  items: MenuItem[];
+}
+
+// Tooltip for collapsed sidebar
+function NavTooltip({ label }: { label: string }) {
+  return (
+    <span className="absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-[60]">
+      {label}
+    </span>
+  );
+}
+
 export function Layout({ children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [hoverExpanded, setHoverExpanded] = useState(false);
   const datePickerRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const { profile, accessibleModules, signOut } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { currentPage, setCurrentPage, sidebarCollapsed, setSidebarCollapsed } = useNavigation();
@@ -78,126 +107,193 @@ export function Layout({ children }: LayoutProps) {
 
   // Auto-collapse sidebar for specific pages
   const autoCollapsiblePages = ['crm', 'command-center', 'finance'];
-  const shouldAutoCollapse = true;
-
-  // Automatically collapse sidebar when entering CRM or Command Center
   useEffect(() => {
     if (autoCollapsiblePages.includes(currentPage) && !sidebarCollapsed) {
       setSidebarCollapsed(true);
     }
-  }, [currentPage, sidebarCollapsed, setSidebarCollapsed]);
+  }, [currentPage]);
 
-  const menuItems = [
-    { id: 'dashboard', label: t('nav.dashboard'), icon: LayoutDashboard },
-    { id: 'products', label: t('nav.products'), icon: Package },
-    { id: 'batches', label: t('nav.batches'), icon: Boxes },
-    { id: 'stock', label: t('nav.stock'), icon: Warehouse },
-    { id: 'customers', label: t('nav.customers'), icon: Users },
-    { id: 'sales-orders', label: t('nav.salesOrders'), icon: FileText },
-    { id: 'delivery-challan', label: t('nav.deliveryChallan'), icon: Truck },
-    { id: 'sales', label: t('nav.sales'), icon: ShoppingCart },
-    { id: 'purchase-orders', label: t('nav.purchaseOrders'), icon: ClipboardList },
-    { id: 'import-requirements', label: t('nav.importRequirements'), icon: TrendingUp },
-    { id: 'import-containers', label: t('nav.importContainers'), icon: Package },
-    { id: 'finance', label: t('nav.finance'), icon: DollarSign },
-    { id: 'price-calculator', label: 'Price Calculator', icon: Calculator },
-    { id: 'crm', label: t('nav.crm'), icon: UserCircle },
-    { id: 'command-center', label: t('nav.commandCenter'), icon: Zap },
-    { id: 'tasks', label: t('nav.tasks'), icon: CheckSquare },
-    { id: 'inventory', label: t('nav.inventory'), icon: Warehouse },
-    { id: 'settings', label: t('nav.settings'), icon: Settings },
+  const isCollapsed = sidebarCollapsed && !hoverExpanded;
+
+  const handleSidebarMouseEnter = () => {
+    if (!sidebarCollapsed) return;
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => setHoverExpanded(true), 80);
+  };
+
+  const handleSidebarMouseLeave = () => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => setHoverExpanded(false), 120);
+  };
+
+  // All menu items — order/IDs unchanged
+  const allItems: MenuItem[] = [
+    { id: 'dashboard',           label: t('nav.dashboard'),           icon: LayoutDashboard },
+    { id: 'crm',                 label: t('nav.crm'),                  icon: UserCircle },
+    { id: 'customers',           label: t('nav.customers'),            icon: Users },
+    { id: 'sales-orders',        label: t('nav.salesOrders'),          icon: FileText },
+    { id: 'delivery-challan',    label: t('nav.deliveryChallan'),      icon: Truck },
+    { id: 'sales',               label: t('nav.sales'),                icon: ShoppingCart },
+    { id: 'products',            label: t('nav.products'),             icon: Package },
+    { id: 'batches',             label: t('nav.batches'),              icon: Boxes },
+    { id: 'stock',               label: t('nav.stock'),                icon: Warehouse },
+    { id: 'inventory',           label: t('nav.inventory'),            icon: Warehouse },
+    { id: 'purchase-orders',     label: t('nav.purchaseOrders'),       icon: ClipboardList },
+    { id: 'import-requirements', label: t('nav.importRequirements'),   icon: TrendingUp },
+    { id: 'import-containers',   label: t('nav.importContainers'),     icon: Package },
+    { id: 'finance',             label: t('nav.finance'),              icon: DollarSign },
+    { id: 'price-calculator',    label: 'Price Calculator',            icon: Calculator },
+    { id: 'sales-profit-report', label: 'Sales Profit Report',         icon: BarChart2 },
+    { id: 'tasks',               label: t('nav.tasks'),                icon: CheckSquare },
+    { id: 'command-center',      label: t('nav.commandCenter'),        icon: Zap },
+    { id: 'settings',            label: t('nav.settings'),             icon: Settings },
   ];
 
-  const visibleMenuItems = menuItems.filter(item => accessibleModules.has(item.id));
+  const groups: MenuGroup[] = [
+    { label: 'Main',      items: allItems.filter(i => ['dashboard', 'crm', 'customers'].includes(i.id)) },
+    { label: 'Sales',     items: allItems.filter(i => ['sales-orders', 'delivery-challan', 'sales'].includes(i.id)) },
+    { label: 'Operations',items: allItems.filter(i => ['products', 'batches', 'stock', 'inventory'].includes(i.id)) },
+    { label: 'Purchases', items: allItems.filter(i => ['purchase-orders', 'import-requirements', 'import-containers'].includes(i.id)) },
+    { label: 'Finance',   items: allItems.filter(i => ['finance', 'price-calculator'].includes(i.id)) },
+    { label: 'Reports',   items: allItems.filter(i => ['sales-profit-report'].includes(i.id)) },
+    { label: 'System',    items: allItems.filter(i => ['tasks', 'command-center', 'settings'].includes(i.id)) },
+  ];
 
   const toggleLanguage = () => {
     setLanguage(language === 'en' ? 'id' : 'en');
   };
 
+  const navigate = (id: string) => {
+    setCurrentPage(id);
+    setSidebarOpen(false);
+    setHoverExpanded(false);
+  };
+
+  const sidebarWidth = isCollapsed ? 'w-16' : 'w-56';
+  const mainPadding = sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-56';
+
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Mobile overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-gray-900 bg-opacity-50 z-20 lg:hidden transition-opacity"
+          className="fixed inset-0 bg-gray-900 bg-opacity-50 z-20 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
+      {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 z-30 h-full bg-white border-r border-gray-200 transform transition-all lg:translate-x-0 ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } ${sidebarCollapsed && shouldAutoCollapse ? 'w-16' : 'w-64'} flex flex-col`}
+        ref={sidebarRef}
+        onMouseEnter={handleSidebarMouseEnter}
+        onMouseLeave={handleSidebarMouseLeave}
+        className={`fixed top-0 left-0 z-30 h-full bg-white border-r border-gray-200 flex flex-col
+          transform transition-[width,transform] duration-200 ease-in-out
+          lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          ${isCollapsed ? 'w-16' : 'w-56'}`}
       >
-        <div className="flex items-center justify-between p-3 border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <img src={logo} alt="Logo" className="h-8 w-8 flex-shrink-0" />
-            {!(sidebarCollapsed && shouldAutoCollapse) && (
-              <div className="flex flex-col leading-tight">
-                <span className="text-xs font-bold text-gray-900">PT. SHUBHAM ANZEN</span>
-                <span className="text-xs font-bold text-gray-900">PHARMA JAYA</span>
-              </div>
-            )}
-          </div>
+        {/* Company header */}
+        <div className={`flex items-center border-b border-gray-200 flex-shrink-0 ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-2 px-3 py-3'}`}>
+          <img src={logo} alt="Logo" className="h-7 w-7 flex-shrink-0" />
+          {!isCollapsed && (
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-gray-900 truncate leading-tight">PT. SHUBHAM ANZEN PHARMA JAYA</p>
+            </div>
+          )}
           <button
             onClick={() => setSidebarOpen(false)}
-            className="lg:hidden p-1 rounded hover:bg-gray-100"
+            className="lg:hidden p-1 rounded hover:bg-gray-100 ml-auto"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          {visibleMenuItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = currentPage === item.id;
+        {/* Nav groups */}
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2">
+          {groups.map((group, gi) => {
+            const visibleItems = group.items.filter(item => accessibleModules.has(item.id));
+            if (visibleItems.length === 0) return null;
+
             return (
-              <a
-                key={item.id}
-                href={`/${item.id}`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  setCurrentPage(item.id);
-                  setSidebarOpen(false);
-                }}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition relative group ${
-                  isActive
-                    ? 'bg-blue-50 text-blue-600'
-                    : 'text-gray-700 hover:bg-gray-50'
-                } ${sidebarCollapsed && shouldAutoCollapse ? 'justify-center' : ''}`}
-                title={sidebarCollapsed && shouldAutoCollapse ? item.label : ''}
-              >
-                <Icon className="w-5 h-5 flex-shrink-0" />
-                {!(sidebarCollapsed && shouldAutoCollapse) && (
-                  <span className="font-medium text-sm">{item.label}</span>
+              <div key={group.label} className={gi > 0 ? 'mt-1' : ''}>
+                {/* Group label — hidden when collapsed */}
+                {!isCollapsed && (
+                  <p className="px-3 pt-2 pb-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                    {group.label}
+                  </p>
                 )}
-                {/* Enhanced tooltip for collapsed state */}
-                {sidebarCollapsed && shouldAutoCollapse && (
-                  <span className="absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                    {item.label}
-                  </span>
+                {/* Collapsed: tiny gap line between groups */}
+                {isCollapsed && gi > 0 && (
+                  <div className="mx-3 my-1 border-t border-gray-100" />
                 )}
-              </a>
+
+                <div className="px-2 space-y-0.5">
+                  {visibleItems.map(item => {
+                    const Icon = item.icon;
+                    const isActive = currentPage === item.id;
+                    return (
+                      <a
+                        key={item.id}
+                        href={`/${item.id}`}
+                        onClick={e => { e.preventDefault(); navigate(item.id); }}
+                        className={`relative group flex items-center rounded-lg transition-colors duration-100
+                          ${isCollapsed ? 'justify-center px-0 py-2' : 'gap-2.5 px-2.5 py-1.5'}
+                          ${isActive
+                            ? 'bg-blue-50 text-blue-600'
+                            : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                          }`}
+                        style={{ minHeight: 34 }}
+                      >
+                        {/* Active left bar */}
+                        {isActive && (
+                          <span className="absolute left-0 top-1 bottom-1 w-0.5 bg-blue-500 rounded-r" />
+                        )}
+                        <Icon
+                          className="flex-shrink-0"
+                          style={{ width: 18, height: 18 }}
+                        />
+                        {!isCollapsed && (
+                          <span className="text-sm font-medium truncate">{item.label}</span>
+                        )}
+                        {/* Tooltip — only when truly collapsed (not hover-expanded) */}
+                        {sidebarCollapsed && !hoverExpanded && (
+                          <NavTooltip label={item.label} />
+                        )}
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </nav>
+
+        {/* User footer */}
+        {!isCollapsed && profile && (
+          <div className="flex-shrink-0 border-t border-gray-200 px-3 py-2">
+            <p className="text-xs font-medium text-gray-700 truncate">{profile.full_name || profile.username}</p>
+            <p className="text-xs text-gray-400 capitalize truncate">{profile.role}</p>
+          </div>
+        )}
       </aside>
 
-      <div className={`transition-all ${sidebarCollapsed && shouldAutoCollapse ? 'lg:pl-16' : 'lg:pl-64'}`}>
+      {/* Main content */}
+      <div className={`transition-[padding] duration-200 ${mainPadding}`}>
         <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-          <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center justify-between px-4 py-2.5">
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="lg:hidden p-2 rounded hover:bg-gray-100"
+                className="lg:hidden p-1.5 rounded hover:bg-gray-100"
               >
-                <Menu className="w-6 h-6" />
+                <Menu className="w-5 h-5" />
               </button>
               <button
-                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                className="hidden lg:block p-2 rounded hover:bg-gray-100"
+                onClick={() => { setSidebarCollapsed(!sidebarCollapsed); setHoverExpanded(false); }}
+                className="hidden lg:block p-1.5 rounded hover:bg-gray-100"
                 title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               >
-                <Menu className="w-6 h-6" />
+                <Menu className="w-5 h-5" />
               </button>
             </div>
 
@@ -225,8 +321,7 @@ export function Layout({ children }: LayoutProps) {
             <div className="md:hidden relative" ref={datePickerRef}>
               <button
                 onClick={() => setDatePickerOpen(!datePickerOpen)}
-                className="p-2 rounded hover:bg-gray-100 flex items-center gap-1 text-gray-600"
-                title="Date range filter"
+                className="p-1.5 rounded hover:bg-gray-100 flex items-center gap-1 text-gray-600"
               >
                 <Calendar className="w-4 h-4" />
               </button>
@@ -263,30 +358,28 @@ export function Layout({ children }: LayoutProps) {
               )}
             </div>
 
-            <div className="hidden lg:flex items-center gap-2 mr-3 text-xs text-gray-600">
+            <div className="hidden lg:flex items-center gap-1.5 mr-3 text-xs text-gray-500">
               <Calendar className="w-3.5 h-3.5" />
               <span>{formatDate(new Date())}</span>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <NotificationDropdown />
 
               <button
                 onClick={toggleLanguage}
-                className="flex items-center gap-2 px-3 py-2 rounded hover:bg-gray-100"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded hover:bg-gray-100"
               >
-                <Globe className="w-5 h-5 text-gray-600" />
-                <span className="text-sm font-medium text-gray-700 uppercase">
-                  {language}
-                </span>
+                <Globe className="w-4 h-4 text-gray-600" />
+                <span className="text-xs font-medium text-gray-700 uppercase">{language}</span>
               </button>
 
               <button
                 onClick={() => signOut()}
-                className="flex items-center gap-2 px-3 py-2 rounded hover:bg-gray-100 text-gray-700"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded hover:bg-gray-100 text-gray-700"
               >
-                <LogOut className="w-5 h-5" />
-                <span className="text-sm font-medium">{t('auth.logout')}</span>
+                <LogOut className="w-4 h-4" />
+                <span className="text-xs font-medium">{t('auth.logout')}</span>
               </button>
             </div>
           </div>
