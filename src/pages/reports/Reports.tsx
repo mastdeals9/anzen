@@ -97,17 +97,19 @@ function exportCSV(rows: Record<string, unknown>[], filename: string) {
 
 interface ProductRow {
   product_id: string; product_name: string; product_code: string;
+  product_unit: string;
   total_qty_sold: number;
-  avg_selling_price: number; avg_landed_cost: number;
-  profit_per_unit: number; profit_pct: number; total_profit: number;
-  no_cost: boolean;
+  avg_selling_price_usd: number; avg_landed_cost_usd: number;
+  profit_per_unit_usd: number; profit_pct: number; total_profit: number;
+  no_cost: boolean; using_purchase_price: boolean;
 }
 interface DrilldownRow {
   invoice_id: string; invoice_number: string; invoice_date: string;
   customer_name: string; batch_number: string; qty: number;
-  selling_price: number; landed_cost: number; profit_per_unit: number;
+  product_unit: string;
+  selling_price_usd: number; landed_cost_usd: number; profit_per_unit_usd: number;
   line_sales: number; line_cost: number; line_profit: number; profit_pct: number;
-  no_cost: boolean;
+  no_cost: boolean; using_purchase_price: boolean;
 }
 interface MonthRow {
   month_label: string; month_start: string;
@@ -154,11 +156,12 @@ function DrilldownPanel({ product, rows, loading, onClose }: {
         </div>
         <div className="grid grid-cols-3 divide-x divide-gray-100 border-b border-gray-200">
           {[
-            { label: 'Total Qty',       value: formatNumber(product.total_qty_sold, 3) },
-            { label: 'Avg Sell Price',  value: formatCurrency(product.avg_selling_price) },
-            { label: 'Avg Landed Cost', value: product.no_cost
+            { label: `Total Qty${product.product_unit ? ` (${product.product_unit})` : ''}`, value: formatNumber(product.total_qty_sold, 3) },
+            { label: 'Avg Sell Price (USD)',  value: `$${formatNumber(product.avg_selling_price_usd, 4)}` },
+            { label: `Avg ${product.using_purchase_price && !product.no_cost ? 'Purchase' : 'Landed'} Cost (USD)`,
+              value: product.no_cost
                 ? <span className="text-amber-600 font-semibold">No cost data</span>
-                : formatCurrency(product.avg_landed_cost) },
+                : `$${formatNumber(product.avg_landed_cost_usd, 4)}` },
           ].map(s => (
             <div key={s.label} className="px-5 py-3 text-center">
               <p className="text-xs text-gray-400">{s.label}</p>
@@ -171,25 +174,33 @@ function DrilldownPanel({ product, rows, loading, onClose }: {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {['Invoice','Date','Customer','Batch','Qty','Sell Price','Landed Cost','Profit/Unit','Profit','Margin'].map(h => (
+                  {['Invoice','Date','Customer','Batch','Qty','Sell (USD)','Cost (USD)','Profit/Unit (USD)','Profit (IDR)','Margin'].map(h => (
                     <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {rows.map((r, i) => (
-                  <tr key={`${r.invoice_id}-${i}`} className={`hover:bg-blue-50/40 transition-colors ${r.no_cost ? 'bg-amber-50/30' : ''}`}>
+                  <tr key={`${r.invoice_id}-${i}`} className={`hover:bg-blue-50/40 transition-colors ${r.no_cost ? 'bg-amber-50/30' : r.using_purchase_price ? 'bg-yellow-50/20' : ''}`}>
                     <td className="px-3 py-2 font-mono text-xs font-medium text-blue-700 whitespace-nowrap">{r.invoice_number}</td>
                     <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">{r.invoice_date}</td>
                     <td className="px-3 py-2 text-xs text-gray-800 max-w-[120px] truncate">{r.customer_name}</td>
                     <td className="px-3 py-2 text-xs text-gray-500 font-mono whitespace-nowrap">{r.batch_number || '—'}</td>
-                    <td className="px-3 py-2 text-right text-xs font-medium text-gray-800">{formatNumber(r.qty, 3)}</td>
-                    <td className="px-3 py-2 text-right text-xs text-gray-700">{formatCurrency(r.selling_price)}</td>
-                    <td className="px-3 py-2 text-right text-xs text-gray-500">
-                      {r.no_cost ? <span className="text-amber-500 text-[10px]">—</span> : formatCurrency(r.landed_cost)}
+                    <td className="px-3 py-2 text-right text-xs font-medium text-gray-800">
+                      {formatNumber(r.qty, 3)}{r.product_unit ? <span className="text-gray-400 ml-0.5">{r.product_unit}</span> : ''}
                     </td>
-                    <td className={`px-3 py-2 text-right text-xs font-medium ${r.profit_per_unit >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                      {r.no_cost ? '—' : formatCurrency(r.profit_per_unit)}
+                    <td className="px-3 py-2 text-right text-xs text-gray-700">${formatNumber(r.selling_price_usd, 4)}</td>
+                    <td className="px-3 py-2 text-right text-xs">
+                      {r.no_cost
+                        ? <span className="text-amber-500 text-[10px]">—</span>
+                        : <span className={r.using_purchase_price ? 'text-amber-600' : 'text-gray-500'}>
+                            ${formatNumber(r.landed_cost_usd, 4)}
+                            {r.using_purchase_price && <span className="ml-0.5 text-[9px] text-amber-400">P</span>}
+                          </span>
+                      }
+                    </td>
+                    <td className={`px-3 py-2 text-right text-xs font-medium ${r.profit_per_unit_usd >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {r.no_cost ? '—' : `$${formatNumber(r.profit_per_unit_usd, 4)}`}
                     </td>
                     <td className={`px-3 py-2 text-right text-xs font-semibold ${r.line_profit >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                       {r.no_cost ? '—' : formatCurrency(r.line_profit)}
@@ -296,10 +307,10 @@ function SalesProfitTab({ dateRange }: { dateRange: { startDate: string; endDate
                   <th className="px-4 py-3 w-6" />
                   <th className={thCls(sortKey==='product_name')} onClick={()=>handleSort('product_name')}>Product Name <SortIcon col="product_name" /></th>
                   <th className={`${thCls(sortKey==='total_qty_sold')} text-right`} onClick={()=>handleSort('total_qty_sold')}>Qty Sold <SortIcon col="total_qty_sold" /></th>
-                  <th className={`${thCls(sortKey==='avg_selling_price')} text-right`} onClick={()=>handleSort('avg_selling_price')}>Avg Selling Price <SortIcon col="avg_selling_price" /></th>
-                  <th className={`${thCls(sortKey==='avg_landed_cost')} text-right`} onClick={()=>handleSort('avg_landed_cost')}>Avg Landed Cost <SortIcon col="avg_landed_cost" /></th>
+                  <th className={`${thCls(sortKey==='avg_selling_price_usd')} text-right`} onClick={()=>handleSort('avg_selling_price_usd')}>Avg Selling Price (USD) <SortIcon col="avg_selling_price_usd" /></th>
+                  <th className={`${thCls(sortKey==='avg_landed_cost_usd')} text-right`} onClick={()=>handleSort('avg_landed_cost_usd')}>Avg Landed Cost (USD) <SortIcon col="avg_landed_cost_usd" /></th>
                   <th className={`${thCls(sortKey==='profit_pct')} text-right`} onClick={()=>handleSort('profit_pct')}>Profit % <SortIcon col="profit_pct" /></th>
-                  <th className={`${thCls(sortKey==='total_profit')} text-right`} onClick={()=>handleSort('total_profit')}>Total Profit <SortIcon col="total_profit" /></th>
+                  <th className={`${thCls(sortKey==='total_profit')} text-right`} onClick={()=>handleSort('total_profit')}>Total Profit (IDR) <SortIcon col="total_profit" /></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -311,12 +322,21 @@ function SalesProfitTab({ dateRange }: { dateRange: { startDate: string; endDate
                       <p className="font-medium text-gray-900">{r.product_name}</p>
                       {r.product_code && <p className="text-xs text-gray-400 font-mono">{r.product_code}</p>}
                     </td>
-                    <td className="px-4 py-3 text-right font-medium text-gray-800">{formatNumber(r.total_qty_sold,3)}</td>
-                    <td className="px-4 py-3 text-right text-gray-700">{formatCurrency(r.avg_selling_price)}</td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-800">
+                      {formatNumber(r.total_qty_sold, 3)}
+                      {r.product_unit && <span className="ml-1 text-xs text-gray-400">{r.product_unit}</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-700">${formatNumber(r.avg_selling_price_usd, 4)}</td>
                     <td className="px-4 py-3 text-right text-gray-600">
                       {r.no_cost
                         ? <span className="text-xs text-amber-500 font-medium">No cost data</span>
-                        : formatCurrency(r.avg_landed_cost)}
+                        : <span className={r.using_purchase_price ? 'text-amber-600' : ''}>
+                            ${formatNumber(r.avg_landed_cost_usd, 4)}
+                            {r.using_purchase_price && (
+                              <span className="ml-1 text-[10px] text-amber-500 font-medium">purchase price</span>
+                            )}
+                          </span>
+                      }
                     </td>
                     <td className="px-4 py-3 text-right">
                       {r.no_cost
@@ -334,13 +354,19 @@ function SalesProfitTab({ dateRange }: { dateRange: { startDate: string; endDate
                   <td colSpan={2} className="px-4 py-3 text-xs font-bold text-gray-600 uppercase">Grand Total ({filtered.length} products)</td>
                   <td className="px-4 py-3 text-right text-xs font-bold text-gray-800">{formatNumber(filtered.reduce((s,r)=>s+r.total_qty_sold,0),3)}</td>
                   <td colSpan={3} />
-                  <td className="px-4 py-3 text-right text-xs font-bold text-green-700">{formatCurrency(filtered.reduce((s,r)=>s+r.total_profit,0))}</td>
+                  <td className="px-4 py-3 text-right text-xs font-bold text-green-700">{formatCurrency(filtered.filter(r=>!r.no_cost).reduce((s,r)=>s+r.total_profit,0))}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
         )}
       </div>
+
+      {filtered.some(r => r.using_purchase_price) && (
+        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
+          <span className="font-semibold">Note:</span> Rows marked <span className="font-semibold">"purchase price"</span> use the batch purchase price (import price) as cost — the landed cost including container charges has not yet been allocated for those batches. Profit % may appear higher than actual.
+        </p>
+      )}
 
       {drillProduct && (
         <DrilldownPanel product={drillProduct} rows={drillRows} loading={drillLoading} onClose={()=>setDrillProduct(null)} />
