@@ -133,10 +133,30 @@ interface ExpenseVsProfitRow {
 function DrilldownPanel({ product, rows, loading, onClose }: {
   product: ProductRow; rows: DrilldownRow[]; loading: boolean; onClose: () => void;
 }) {
+  const exportDrillCSV = () => {
+    if (!rows.length) return;
+    const csvRows: Record<string, unknown>[] = rows.map(r => ({
+      'Invoice Number': r.invoice_number,
+      'Invoice Date': r.invoice_date,
+      'Customer': r.customer_name,
+      'Batch Number': r.batch_number,
+      [`Qty (${r.product_unit || 'unit'})`]: r.qty,
+      'Sell Price (USD)': r.selling_price_usd,
+      'Cost (USD)': r.no_cost ? '' : r.landed_cost_usd,
+      'Cost Type': r.no_cost ? 'No data' : r.using_purchase_price ? 'Purchase Price' : 'Landed Cost',
+      'Profit/Unit (USD)': r.no_cost ? '' : r.profit_per_unit_usd,
+      'Line Sales (IDR)': r.line_sales,
+      'Line Cost (IDR)': r.line_cost,
+      'Line Profit (IDR)': r.no_cost ? '' : r.line_profit,
+      'Profit %': r.no_cost ? '' : r.profit_pct,
+    }));
+    exportCSV(csvRows, `drilldown-${product.product_name.replace(/\s+/g, '-')}.csv`);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-gray-900/40" onClick={onClose} />
-      <div className="w-full max-w-3xl bg-white shadow-2xl flex flex-col overflow-hidden">
+      <div className="w-16 bg-gray-900/40 shrink-0" onClick={onClose} />
+      <div className="flex-1 bg-white shadow-2xl flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
           <div>
             <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">Invoice Drill-down</p>
@@ -151,6 +171,12 @@ function DrilldownPanel({ product, rows, loading, onClose }: {
               </p>
             </div>
             <ProfitBadge pct={product.profit_pct} />
+            {!loading && rows.length > 0 && (
+              <button onClick={exportDrillCSV}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+                <Download className="w-3.5 h-3.5" />Export
+              </button>
+            )}
             <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-200 transition"><X className="w-5 h-5 text-gray-500" /></button>
           </div>
         </div>
@@ -231,6 +257,7 @@ function DrilldownPanel({ product, rows, loading, onClose }: {
 function SalesProfitTab({ dateRange }: { dateRange: { startDate: string; endDate: string } }) {
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
   const [search, setSearch] = useState('');
   const { sortKey, handleSort, sort, SortIcon } = useSortable<ProductRow>('total_profit');
   const [drillProduct, setDrillProduct] = useState<ProductRow | null>(null);
@@ -255,6 +282,82 @@ function SalesProfitTab({ dateRange }: { dateRange: { startDate: string; endDate
     });
     setDrillRows((data as DrilldownRow[]) || []);
     setDrillLoading(false);
+  };
+
+  const exportFullReport = async () => {
+    if (!rows.length) return;
+    setExportLoading(true);
+    try {
+      const csvLines: string[] = [];
+
+      // Header metadata
+      csvLines.push(`Sales Profit Report — ${dateRange.startDate} to ${dateRange.endDate}`);
+      csvLines.push('');
+
+      // Summary section
+      csvLines.push('=== SUMMARY ===');
+      const summaryHeaders = ['Product Name','Product Code','Unit','Qty Sold','Avg Sell Price (USD)','Avg Cost (USD)','Cost Type','Profit %','Total Profit (IDR)'];
+      csvLines.push(summaryHeaders.map(h => JSON.stringify(h)).join(','));
+      for (const r of rows) {
+        const summaryRow = [
+          r.product_name, r.product_code, r.product_unit,
+          r.total_qty_sold,
+          r.avg_selling_price_usd,
+          r.no_cost ? '' : r.avg_landed_cost_usd,
+          r.no_cost ? 'No Data' : r.using_purchase_price ? 'Purchase Price' : 'Landed Cost',
+          r.no_cost ? '' : r.profit_pct,
+          r.no_cost ? '' : r.total_profit,
+        ];
+        csvLines.push(summaryRow.map(v => JSON.stringify(v ?? '')).join(','));
+      }
+      csvLines.push('');
+
+      // Detail sections — one per product
+      for (const r of rows) {
+        csvLines.push(`=== ${r.product_name} (${r.product_code}) ===`);
+        const detailHeaders = ['Invoice Number','Invoice Date','Customer','Batch Number',`Qty (${r.product_unit || 'unit'})`,
+          'Sell Price (USD)','Cost (USD)','Cost Type','Profit/Unit (USD)','Line Sales (IDR)','Line Cost (IDR)','Line Profit (IDR)','Profit %'];
+        csvLines.push(detailHeaders.map(h => JSON.stringify(h)).join(','));
+
+        const { data: drill } = await supabase.rpc('get_sales_profit_drilldown', {
+          p_product_id: r.product_id, p_start_date: dateRange.startDate, p_end_date: dateRange.endDate,
+        });
+        const drillData = (drill as DrilldownRow[]) || [];
+
+        for (const d of drillData) {
+          const detailRow = [
+            d.invoice_number, d.invoice_date, d.customer_name, d.batch_number,
+            d.qty,
+            d.selling_price_usd,
+            d.no_cost ? '' : d.landed_cost_usd,
+            d.no_cost ? 'No Data' : d.using_purchase_price ? 'Purchase Price' : 'Landed Cost',
+            d.no_cost ? '' : d.profit_per_unit_usd,
+            d.line_sales,
+            d.line_cost,
+            d.no_cost ? '' : d.line_profit,
+            d.no_cost ? '' : d.profit_pct,
+          ];
+          csvLines.push(detailRow.map(v => JSON.stringify(v ?? '')).join(','));
+        }
+
+        // Product subtotal
+        const totalQtySold = drillData.reduce((s, d) => s + d.qty, 0);
+        const totalProfit  = drillData.reduce((s, d) => s + (d.no_cost ? 0 : d.line_profit), 0);
+        const subtotal = ['SUBTOTAL', '', '', '', totalQtySold, '', '', '', '', '', '', totalProfit, ''];
+        csvLines.push(subtotal.map(v => JSON.stringify(v ?? '')).join(','));
+        csvLines.push('');
+      }
+
+      const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sales-profit-full-${dateRange.startDate}-to-${dateRange.endDate}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportLoading(false);
+    }
   };
 
   const filtered = sort(rows.filter(r =>
@@ -288,9 +391,14 @@ function SalesProfitTab({ dateRange }: { dateRange: { startDate: string; endDate
           {search && <button onClick={()=>setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"><X className="w-3.5 h-3.5" /></button>}
         </div>
         <span className="text-xs text-gray-400">{filtered.length} products</span>
-        <button onClick={()=>exportCSV(filtered as unknown as Record<string,unknown>[], 'sales-profit.csv')}
+        <button onClick={()=>exportCSV(filtered as unknown as Record<string,unknown>[], 'sales-profit-summary.csv')}
           className="flex items-center gap-1.5 px-3 py-2 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-          <Download className="w-3.5 h-3.5" />Export CSV
+          <Download className="w-3.5 h-3.5" />Summary CSV
+        </button>
+        <button onClick={exportFullReport} disabled={exportLoading || loading || rows.length === 0}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs text-white bg-blue-600 border border-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition">
+          <Download className={`w-3.5 h-3.5 ${exportLoading ? 'animate-spin' : ''}`} />
+          {exportLoading ? 'Exporting…' : 'Full Report CSV'}
         </button>
         <button onClick={load} disabled={loading}
           className="flex items-center gap-1.5 px-3 py-2 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
