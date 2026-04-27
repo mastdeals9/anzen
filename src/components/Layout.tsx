@@ -169,8 +169,7 @@ export function Layout({ children }: LayoutProps) {
     setHoverExpanded(false);
   };
 
-  const sidebarWidth = isCollapsed ? 'w-16' : 'w-56';
-  const mainPadding = sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-56';
+  const mainPadding = sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-[200px]';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -190,44 +189,44 @@ export function Layout({ children }: LayoutProps) {
         className={`fixed top-0 left-0 z-30 h-full bg-white border-r border-gray-200 flex flex-col
           transform transition-[width,transform] duration-200 ease-in-out
           lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          ${isCollapsed ? 'w-16' : 'w-56'}`}
+          ${isCollapsed ? 'w-16' : 'w-[200px]'}`}
       >
         {/* Company header */}
-        <div className={`flex items-center border-b border-gray-200 flex-shrink-0 ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-2 px-3 py-3'}`}>
-          <img src={logo} alt="Logo" className="h-7 w-7 flex-shrink-0" />
+        <div className={`flex items-center border-b border-gray-200 flex-shrink-0 ${isCollapsed ? 'justify-center px-2 py-2' : 'gap-1.5 px-2.5 py-2'}`} style={{ minHeight: 48 }}>
+          <img src={logo} alt="Logo" className="flex-shrink-0" style={{ width: 28, height: 28 }} />
           {!isCollapsed && (
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold text-gray-900 truncate leading-tight">PT. SHUBHAM ANZEN PHARMA JAYA</p>
+              <p className="text-sm font-bold text-gray-900 truncate leading-tight">PT. SHUBHAM ANZEN PHARMA JAYA</p>
             </div>
           )}
           <button
             onClick={() => setSidebarOpen(false)}
             className="lg:hidden p-1 rounded hover:bg-gray-100 ml-auto"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
 
         {/* Nav groups */}
-        <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2">
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden py-1">
           {groups.map((group, gi) => {
             const visibleItems = group.items.filter(item => accessibleModules.has(item.id));
             if (visibleItems.length === 0) return null;
 
             return (
-              <div key={group.label} className={gi > 0 ? 'mt-1' : ''}>
+              <div key={group.label} className={gi > 0 ? 'mt-0.5' : ''}>
                 {/* Group label — hidden when collapsed */}
                 {!isCollapsed && (
-                  <p className="px-3 pt-2 pb-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                  <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
                     {group.label}
                   </p>
                 )}
                 {/* Collapsed: tiny gap line between groups */}
                 {isCollapsed && gi > 0 && (
-                  <div className="mx-3 my-1 border-t border-gray-100" />
+                  <div className="mx-2.5 my-0.5 border-t border-gray-100" />
                 )}
 
-                <div className="px-2 space-y-0.5">
+                <div className="px-1.5 space-y-px">
                   {visibleItems.map(item => {
                     const Icon = item.icon;
                     const isActive = currentPage === item.id;
@@ -236,13 +235,13 @@ export function Layout({ children }: LayoutProps) {
                         key={item.id}
                         href={`/${item.id}`}
                         onClick={e => { e.preventDefault(); navigate(item.id); }}
-                        className={`relative group flex items-center rounded-lg transition-colors duration-100
-                          ${isCollapsed ? 'justify-center px-0 py-2' : 'gap-2.5 px-2.5 py-1.5'}
+                        className={`relative group flex items-center rounded-md transition-colors duration-100
+                          ${isCollapsed ? 'justify-center px-0 py-1.5' : 'gap-2 px-2 py-1.5'}
                           ${isActive
                             ? 'bg-blue-50 text-blue-600'
                             : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                           }`}
-                        style={{ minHeight: 34 }}
+                        style={{ minHeight: 32 }}
                       >
                         {/* Active left bar */}
                         {isActive && (
@@ -250,7 +249,7 @@ export function Layout({ children }: LayoutProps) {
                         )}
                         <Icon
                           className="flex-shrink-0"
-                          style={{ width: 18, height: 18 }}
+                          style={{ width: 16, height: 16 }}
                         />
                         {!isCollapsed && (
                           <span className="text-sm font-medium truncate">{item.label}</span>
@@ -270,9 +269,9 @@ export function Layout({ children }: LayoutProps) {
 
         {/* User footer */}
         {!isCollapsed && profile && (
-          <div className="flex-shrink-0 border-t border-gray-200 px-3 py-2">
+          <div className="flex-shrink-0 border-t border-gray-200 px-2.5 py-1.5">
             <p className="text-xs font-medium text-gray-700 truncate">{profile.full_name || profile.username}</p>
-            <p className="text-xs text-gray-400 capitalize truncate">{profile.role}</p>
+            <p className="text-[11px] text-gray-400 capitalize truncate">{profile.role}</p>
           </div>
         )}
       </aside>
