@@ -1201,6 +1201,11 @@ export function Sales() {
   };
 
   const columns = [
+    {
+      key: 'invoice_date',
+      label: t('common.date'),
+      render: (value: any, inv: SalesInvoice) => formatDate(inv.invoice_date)
+    },
     { key: 'invoice_number', label: t('sales.invoiceNumber') },
     {
       key: 'customer',
@@ -1210,35 +1215,10 @@ export function Sales() {
       )
     },
     {
-      key: 'invoice_date',
-      label: t('common.date'),
-      render: (value: any, inv: SalesInvoice) => formatDate(inv.invoice_date)
-    },
-    {
       key: 'total_amount',
       label: t('common.total'),
       render: (value: any, inv: SalesInvoice) => (
         <span className="font-medium">Rp {inv.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-      )
-    },
-    {
-      key: 'paid_amount',
-      label: t('sales.paidAmount'),
-      render: (value: any, inv: SalesInvoice) => (
-        <span className="text-green-600 font-medium">
-          Rp {(inv.paid_amount || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </span>
-      )
-    },
-    {
-      key: 'balance_amount',
-      label: t('sales.balance'),
-      render: (value: any, inv: SalesInvoice) => (
-        <span className={`font-medium ${
-          (inv.balance_amount || 0) === 0 ? 'text-gray-400' : 'text-orange-600'
-        }`}>
-          Rp {(inv.balance_amount || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </span>
       )
     },
     {
@@ -1254,6 +1234,44 @@ export function Sales() {
            inv.payment_status === 'partial' ? t('common.partial') : t('common.paid')}
         </span>
       )
+    },
+    {
+      key: 'balance_amount',
+      label: t('sales.balance'),
+      render: (value: any, inv: SalesInvoice) => (
+        <span className={`font-medium ${
+          (inv.balance_amount || 0) === 0 ? 'text-gray-400' : 'text-orange-600'
+        }`}>
+          Rp {(inv.balance_amount || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </span>
+      )
+    },
+    {
+      key: 'due_date',
+      label: 'Due Date',
+      render: (value: any, inv: SalesInvoice) => {
+        if (!inv.due_date || inv.payment_status === 'paid') {
+          return <span className="text-gray-400">—</span>;
+        }
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const due = new Date(inv.due_date);
+        due.setHours(0, 0, 0, 0);
+        const daysUntilDue = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        const isUrgent = daysUntilDue <= 7;
+        const isOverdue = daysUntilDue < 0;
+        return (
+          <span className={`font-medium ${
+            isOverdue ? 'text-red-700' :
+            isUrgent ? 'text-red-500' :
+            'text-gray-700'
+          }`}>
+            {formatDate(inv.due_date)}
+            {isOverdue && <span className="ml-1 text-xs bg-red-100 text-red-700 px-1 py-0.5 rounded">Overdue</span>}
+            {!isOverdue && isUrgent && <span className="ml-1 text-xs bg-red-50 text-red-500 px-1 py-0.5 rounded">{daysUntilDue}d left</span>}
+          </span>
+        );
+      }
     },
   ];
 
