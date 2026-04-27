@@ -24,14 +24,14 @@ export const ALL_MODULES = [
   { id: 'command-center', label: 'Command Center' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'inventory', label: 'Inventory Adjustments' },
-  { id: 'sales-profit-report', label: 'Sales Profit Report' },
+  { id: 'reports', label: 'Reports' },
   { id: 'settings', label: 'Settings' },
 ] as const;
 
 export type ModuleId = typeof ALL_MODULES[number]['id'];
 
 const ROLE_DEFAULT_MODULES: Record<UserRole, ModuleId[]> = {
-  admin: ALL_MODULES.map(m => m.id) as ModuleId[],
+  admin: ALL_MODULES.map(m => m.id) as ModuleId[], // all modules including 'reports'
   accounts: ['dashboard', 'batches', 'stock', 'customers', 'sales-orders', 'delivery-challan', 'sales', 'purchase-orders', 'import-containers', 'finance', 'tasks', 'settings'],
   sales: ['dashboard', 'products', 'stock', 'customers', 'sales-orders', 'delivery-challan', 'sales', 'purchase-orders', 'import-requirements', 'price-calculator', 'crm', 'command-center', 'tasks', 'settings'],
   warehouse: ['dashboard', 'products', 'batches', 'stock', 'customers', 'sales-orders', 'delivery-challan', 'sales', 'purchase-orders', 'tasks', 'inventory', 'settings'],

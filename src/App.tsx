@@ -34,7 +34,7 @@ const PurchaseOrders = lazy(() => import('./pages/PurchaseOrders'));
 const SalesTeam = lazy(() => import('./pages/SalesTeam').then(m => ({ default: m.SalesTeam })));
 const PriceCalculator = lazy(() => import('./pages/PriceCalculator').then(m => ({ default: m.PriceCalculator })));
 const PublicCalculator = lazy(() => import('./pages/PublicCalculator').then(m => ({ default: m.PublicCalculator })));
-const SalesProfitReport = lazy(() => import('./pages/reports/SalesProfitReport').then(m => ({ default: m.SalesProfitReport })));
+const Reports = lazy(() => import('./pages/reports/Reports').then(m => ({ default: m.Reports })));
 
 function LoadingFallback() {
   return (
@@ -144,8 +144,8 @@ function AppContent() {
         return <Finance />;
       case 'price-calculator':
         return <PriceCalculator />;
-      case 'sales-profit-report':
-        return <SalesProfitReport />;
+      case 'reports':
+        return <Reports />;
       case 'settings':
         return <Settings />;
       default:
