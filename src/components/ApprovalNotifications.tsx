@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { X, FileText, Truck, DollarSign, Wallet } from 'lucide-react';
+import { formatCurrency } from '../utils/currency';
 
 interface PendingApproval {
   id: string;
@@ -10,6 +11,7 @@ interface PendingApproval {
   number: string;
   description: string;
   amount?: number;
+  currency?: string;
   date: string;
 }
 
@@ -33,7 +35,7 @@ export function ApprovalNotifications() {
       const [soRes, dcRes, expRes, pcRes] = await Promise.all([
         supabase
           .from('sales_orders')
-          .select('id, so_number, so_date, total_amount, customers(company_name)')
+          .select('id, so_number, so_date, total_amount, currency, customers(company_name)')
           .eq('status', 'pending_approval')
           .order('created_at', { ascending: false })
           .limit(5),
@@ -63,7 +65,7 @@ export function ApprovalNotifications() {
       soRes.data?.forEach(so => approvals.push({
         id: so.id, type: 'sales_order', number: so.so_number,
         description: (so.customers as any)?.company_name || 'Unknown',
-        amount: so.total_amount, date: so.so_date,
+        amount: so.total_amount, currency: so.currency || 'IDR', date: so.so_date,
       }));
 
       dcRes.data?.forEach(ch => approvals.push({
@@ -155,7 +157,7 @@ export function ApprovalNotifications() {
                   <p className="text-sm text-gray-700 mt-1 truncate">{item.description}</p>
                   {item.amount !== undefined && (
                     <p className="text-xs font-medium text-blue-600 mt-1">
-                      Rp {item.amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      {formatCurrency(item.amount, item.currency || 'IDR')}
                     </p>
                   )}
                 </div>

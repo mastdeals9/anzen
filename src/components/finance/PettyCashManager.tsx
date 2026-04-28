@@ -316,6 +316,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [viewingTransaction, setViewingTransaction] = useState<PettyCashTransaction | null>(null);
   const [editingTransaction, setEditingTransaction] = useState<PettyCashTransaction | null>(null);
+  const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
   const [cashBalance, setCashBalance] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
@@ -441,8 +442,9 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-
-    setUploadingFiles(files);
+    setUploadingFiles(prev => [...prev, ...files]);
+    // Reset input so the same file(s) can be selected again if needed
+    e.target.value = '';
   };
 
   const handlePaste = async (e: React.ClipboardEvent) => {
@@ -539,9 +541,32 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
       import_container_id: transaction.import_container_id || '',
       delivery_challan_id: transaction.delivery_challan_id || '',
     });
-    setExistingDocuments(transaction.petty_cash_documents || []);
+    const docs = transaction.petty_cash_documents || [];
+    setExistingDocuments(docs);
     setUploadingFiles([]);
     setModalOpen(true);
+    if (docs.length) {
+      Promise.all(docs.map(async (doc) => [doc.file_url, await getSignedUrl(doc.file_url)] as [string, string]))
+        .then(entries => setSignedUrlCache(prev => ({ ...prev, ...Object.fromEntries(entries) })));
+    }
+  };
+
+  const getSignedUrl = async (fileUrl: string): Promise<string> => {
+    try {
+      const match = fileUrl.match(/\/storage\/v1\/object\/(?:public|sign)\/([^/]+)\/(.+)/);
+      const authMatch = !match ? fileUrl.match(/\/storage\/v1\/object\/([^/]+)\/(.+)/) : null;
+      const [, bucket, path] = match || authMatch || [];
+      if (!bucket) return fileUrl;
+      const { data } = await supabase.storage.from(bucket).createSignedUrl(decodeURIComponent(path), 3600);
+      return data?.signedUrl || fileUrl;
+    } catch {
+      return fileUrl;
+    }
+  };
+
+  const openDocument = async (url: string) => {
+    const signed = await getSignedUrl(url);
+    window.open(signed, '_blank', 'noopener,noreferrer');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -801,9 +826,16 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
     document.body.removeChild(link);
   };
 
-  const viewTransaction = (transaction: PettyCashTransaction) => {
+  const viewTransaction = async (transaction: PettyCashTransaction) => {
     setViewingTransaction(transaction);
     setViewModalOpen(true);
+    const docs = transaction.petty_cash_documents || [];
+    if (docs.length) {
+      const entries = await Promise.all(
+        docs.map(async (doc) => [doc.file_url, await getSignedUrl(doc.file_url)] as [string, string])
+      );
+      setSignedUrlCache(prev => ({ ...prev, ...Object.fromEntries(entries) }));
+    }
   };
 
   const handleSort = (key: string) => {
@@ -1384,7 +1416,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
                     {doc.file_type === 'photo' ? (
                       <div className="aspect-square bg-gray-100 relative">
                         <img
-                          src={doc.file_url}
+                          src={signedUrlCache[doc.file_url] || doc.file_url}
                           alt={doc.file_name}
                           className="w-full h-full object-cover"
                         />
@@ -1398,15 +1430,13 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
                     <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-xs px-2 py-1.5 flex items-center justify-between">
                       <span>{(doc.file_size / 1024).toFixed(0)} KB</span>
                       <div className="flex gap-1">
-                        <a
-                          href={doc.file_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); openDocument(doc.file_url); }}
                           className="p-1 hover:bg-white hover:bg-opacity-20 rounded"
-                          onClick={(e) => e.stopPropagation()}
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
+                        </button>
                         <button
                           type="button"
                           onClick={() => deleteExistingDocument(doc.id)}
@@ -1651,17 +1681,16 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
                 <p className="text-xs text-gray-500 mb-2">Attachments ({viewingTransaction.petty_cash_documents.length})</p>
                 <div className="grid grid-cols-2 gap-2">
                   {viewingTransaction.petty_cash_documents.map((doc) => (
-                    <a
+                    <button
                       key={doc.id}
-                      href={doc.file_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="group relative border border-gray-200 rounded overflow-hidden hover:border-blue-500 transition-colors"
+                      type="button"
+                      onClick={() => openDocument(doc.file_url)}
+                      className="group relative border border-gray-200 rounded overflow-hidden hover:border-blue-500 transition-colors text-left"
                     >
                       {doc.file_type === 'photo' ? (
                         <div className="aspect-square bg-gray-100 relative">
                           <img
-                            src={doc.file_url}
+                            src={signedUrlCache[doc.file_url] || doc.file_url}
                             alt={doc.file_name}
                             className="w-full h-full object-cover"
                           />
@@ -1680,7 +1709,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
                           {(doc.file_size / 1024).toFixed(0)} KB
                         </div>
                       )}
-                    </a>
+                    </button>
                   ))}
                 </div>
               </div>

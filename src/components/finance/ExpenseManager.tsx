@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, DollarSign, Package, Truck, Building2, CreditCard as Edit, Trash2, FileText, Upload, X, ExternalLink, Download, Eye, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Plus, DollarSign, Package, Truck, Building2, CreditCard as Edit, Trash2, FileText, Upload, X, ExternalLink, Download, Eye, CheckCircle, XCircle, Clock, Clipboard } from 'lucide-react';
 import { Modal } from '../Modal';
 import { useFinance } from '../../contexts/FinanceContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -311,6 +311,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
   const [editingExpense, setEditingExpense] = useState<FinanceExpense | null>(null);
   const [viewingExpense, setViewingExpense] = useState<FinanceExpense | null>(null);
   const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
   const [filterType, setFilterType] = useState<'all' | 'import' | 'sales' | 'staff' | 'operations' | 'admin'>('all');
   const [reconFilter, setReconFilter] = useState<'all' | 'reconciled' | 'not_reconciled'>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -513,6 +514,48 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
     }
   };
 
+
+  const getSignedUrl = async (fileUrl: string): Promise<string> => {
+    try {
+      const match = fileUrl.match(/\/storage\/v1\/object\/(?:public|sign)\/([^/]+)\/(.+)/);
+      if (!match) {
+        // Try authenticated path pattern
+        const authMatch = fileUrl.match(/\/storage\/v1\/object\/([^/]+)\/(.+)/);
+        if (!authMatch) return fileUrl;
+        const [, bucket, path] = authMatch;
+        const { data } = await supabase.storage.from(bucket).createSignedUrl(decodeURIComponent(path), 3600);
+        return data?.signedUrl || fileUrl;
+      }
+      const [, bucket, path] = match;
+      const { data } = await supabase.storage.from(bucket).createSignedUrl(decodeURIComponent(path), 3600);
+      return data?.signedUrl || fileUrl;
+    } catch {
+      return fileUrl;
+    }
+  };
+
+  const openDocument = async (url: string) => {
+    const signed = await getSignedUrl(url);
+    window.open(signed, '_blank', 'noopener,noreferrer');
+  };
+
+  const downloadDocument = async (url: string, filename: string) => {
+    try {
+      const signed = await getSignedUrl(url);
+      const response = await fetch(signed);
+      if (!response.ok) throw new Error('Fetch failed');
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // fallback: open directly
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1470,9 +1513,15 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                       <td className="px-4 py-2.5 whitespace-nowrap text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               setViewingExpense(expense);
                               setViewModalOpen(true);
+                              if (expense.document_urls?.length) {
+                                const entries = await Promise.all(
+                                  expense.document_urls.map(async (url) => [url, await getSignedUrl(url)] as [string, string])
+                                );
+                                setSignedUrlCache(prev => ({ ...prev, ...Object.fromEntries(entries) }));
+                              }
                             }}
                             className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
                             title="View"
@@ -1878,22 +1927,20 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                   {formData.document_urls.map((url, index) => (
                     <div key={index} className="flex items-center gap-2 p-2 bg-green-50 border border-green-200 rounded">
                       <FileText className="w-4 h-4 text-green-600 flex-shrink-0" />
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 text-sm text-green-700 hover:text-green-900 truncate"
+                      <button
+                        type="button"
+                        onClick={() => openDocument(url)}
+                        className="flex-1 text-sm text-green-700 hover:text-green-900 truncate text-left"
                       >
                         Document {index + 1}
-                      </a>
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openDocument(url)}
                         className="p-1 text-green-600 hover:bg-green-100 rounded"
                       >
                         <ExternalLink className="w-3 h-3" />
-                      </a>
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleRemoveDocument(url)}
@@ -2160,35 +2207,33 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                             <span className="text-sm text-blue-900 font-medium">Document {index + 1}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <a
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => openDocument(url)}
                               className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-300 rounded hover:bg-blue-50"
                             >
                               <ExternalLink className="w-3 h-3" />
                               View
-                            </a>
-                            <a
-                              href={url}
-                              download
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => downloadDocument(url, `Document ${index + 1}`)}
                               className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-green-700 bg-white border border-green-300 rounded hover:bg-green-50"
                             >
                               <Download className="w-3 h-3" />
                               Download
-                            </a>
+                            </button>
                           </div>
                         </div>
                         {isImage && (
                           <div className="mt-2">
-                            <a href={url} target="_blank" rel="noopener noreferrer">
-                              <img
-                                src={url}
-                                alt={`Document ${index + 1}`}
-                                className="w-full max-w-md rounded-lg border-2 border-gray-300 hover:border-blue-400 cursor-pointer shadow-sm hover:shadow-md transition-all"
-                                style={{ maxHeight: '300px', objectFit: 'contain' }}
-                              />
-                            </a>
+                            <img
+                              src={signedUrlCache[url] || url}
+                              alt={`Document ${index + 1}`}
+                              className="w-full max-w-md rounded-lg border-2 border-gray-300 hover:border-blue-400 cursor-pointer shadow-sm hover:shadow-md transition-all"
+                              style={{ maxHeight: '300px', objectFit: 'contain' }}
+                              onClick={() => openDocument(url)}
+                            />
                           </div>
                         )}
                       </div>
