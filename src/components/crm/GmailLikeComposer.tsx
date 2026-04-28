@@ -53,6 +53,25 @@ interface AttachedFile {
   size: number;
 }
 
+function inferDocumentType(fileName: string, mode: 'price' | 'coa' | 'general'): 'COA' | 'MSDS' | 'MHD' | 'TDS' | 'SPEC' | 'OTHER' {
+  const normalized = fileName.toLowerCase();
+  if (normalized.includes('coa')) return 'COA';
+  if (normalized.includes('msds') || normalized.includes('sds')) return 'MSDS';
+  if (normalized.includes('mhd') || normalized.includes('expiry')) return 'MHD';
+  if (normalized.includes('tds')) return 'TDS';
+  if (normalized.includes('spec')) return 'SPEC';
+  if (mode === 'coa') return 'COA';
+  return 'OTHER';
+}
+
+function buildNormalizedKey(inquiry: Inquiry, fileName: string, docType: string): string {
+  const base = `${inquiry.product_name || ''}|${inquiry.supplier_name || ''}|${docType}|${fileName || ''}`;
+  return base
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
 const quillModules = {
   toolbar: [
     ['bold', 'italic', 'underline'],
@@ -64,7 +83,7 @@ const quillModules = {
 
 const quillFormats = ['bold', 'italic', 'underline', 'list', 'bullet', 'link'];
 
-function buildSubject(inquiry: Inquiry, mode: 'price' | 'coa' | 'general', replyTo?: GmailLikeComposerProps['replyTo']): string {
+function buildSubject(inquiry: Inquiry, _mode: 'price' | 'coa' | 'general', replyTo?: GmailLikeComposerProps['replyTo']): string {
   if (replyTo?.subject) {
     return replyTo.subject.startsWith('Re:') ? replyTo.subject : `Re: ${replyTo.subject}`;
   }
@@ -232,11 +251,11 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, mode = 'general', 
       if (!user) throw new Error('Not authenticated');
 
       // Upload attachments
-      const uploadedUrls: string[] = [];
+      const uploadedFiles: Array<{ storagePath: string; fileName: string }> = [];
       for (const att of attachments) {
         const filePath = `email-attachments/${user.id}/${Date.now()}_${att.name}`;
         const { error: upErr } = await supabase.storage.from('crm-documents').upload(filePath, att.file);
-        if (!upErr) uploadedUrls.push(filePath);
+        if (!upErr) uploadedFiles.push({ storagePath: filePath, fileName: att.name });
       }
 
       const toList = [toEmail.trim(), ...(ccEmail ? ccEmail.split(',').map(e => e.trim()).filter(Boolean) : [])];
@@ -263,7 +282,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, mode = 'general', 
       }
 
       // Log to DB
-      await supabase.from('crm_email_activities').insert([{
+      const { data: activityData, error: activityError } = await supabase.from('crm_email_activities').insert([{
         inquiry_id: inquiry.id,
         email_type: 'sent',
         from_email: user.email,
@@ -272,10 +291,38 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, mode = 'general', 
         bcc_email: bccEmail ? bccEmail.split(',').map(e => e.trim()).filter(Boolean) : null,
         subject,
         body,
-        attachment_urls: uploadedUrls.length > 0 ? uploadedUrls : null,
+        attachment_urls: uploadedFiles.length > 0 ? uploadedFiles.map((item) => item.storagePath) : null,
         sent_date: new Date().toISOString(),
         created_by: user.id,
-      }]);
+      }]).select('id').single();
+
+      if (activityError) throw activityError;
+
+      if (uploadedFiles.length > 0) {
+        const rows = uploadedFiles.map(({ storagePath, fileName }) => {
+          const docType = inferDocumentType(fileName, mode);
+          return {
+            inquiry_id: inquiry.id,
+            email_activity_id: activityData.id,
+            product_name: inquiry.product_name,
+            supplier_name: inquiry.supplier_name || null,
+            document_type: docType,
+            storage_path: storagePath,
+            display_name: fileName,
+            normalized_key: buildNormalizedKey(inquiry, fileName, docType),
+            version_no: 0,
+            uploaded_by: user.id,
+          };
+        });
+
+        const { error: docInsertError } = await supabase
+          .from('crm_product_documents')
+          .insert(rows);
+
+        if (docInsertError) {
+          console.error('Error inserting crm product documents:', docInsertError);
+        }
+      }
 
       // Auto-update inquiry status
       const updateData: Record<string, unknown> = {};
