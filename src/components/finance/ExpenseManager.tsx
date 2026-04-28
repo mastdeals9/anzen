@@ -70,6 +70,8 @@ interface BankAccount {
 
 interface ExpenseManagerProps {
   canManage: boolean;
+  initialViewExpenseId?: string | null;
+  onInitialViewHandled?: () => void;
 }
 
 const expenseCategories = [
@@ -291,7 +293,7 @@ const expenseCategories = [
   },
 ];
 
-export function ExpenseManager({ canManage }: ExpenseManagerProps) {
+export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewHandled }: ExpenseManagerProps) {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
   const [rejectionModalOpen, setRejectionModalOpen] = useState(false);
@@ -402,6 +404,49 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
   }, [modalOpen, uploadingFiles]);
+
+  useEffect(() => {
+    if (!initialViewExpenseId) return;
+
+    const openExpense = async () => {
+      const existing = expenses.find(expense => expense.id === initialViewExpenseId);
+      if (existing) {
+        setViewingExpense(existing);
+        setViewModalOpen(true);
+        onInitialViewHandled?.();
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('finance_expenses')
+        .select(`
+          *,
+          batches(batch_number),
+          import_containers(container_ref),
+          delivery_challans(challan_number),
+          bank_accounts(bank_name, account_number, alias, currency),
+          bank_statement_lines(
+            id,
+            transaction_date,
+            description,
+            debit_amount,
+            credit_amount,
+            bank_account_id,
+            bank_accounts(bank_name, account_number, alias, currency)
+          )
+        `)
+        .eq('id', initialViewExpenseId)
+        .maybeSingle();
+
+      if (!error && data) {
+        setViewingExpense(data as FinanceExpense);
+        setViewModalOpen(true);
+      }
+      onInitialViewHandled?.();
+    };
+
+    openExpense();
+  }, [initialViewExpenseId, expenses, onInitialViewHandled]);
 
   const loadData = async () => {
     try {

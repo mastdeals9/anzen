@@ -3,6 +3,7 @@ import { Layout } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useFinance } from '../contexts/FinanceContext';
+import { useNavigation } from '../contexts/NavigationContext';
 import { ChevronDown, ChevronRight, Menu, X, Loader } from 'lucide-react';
 
 const PurchaseInvoiceManager = lazy(() => import('../components/finance/PurchaseInvoiceManager').then(m => ({ default: m.PurchaseInvoiceManager })));
@@ -98,12 +99,15 @@ function FinanceContent() {
   const { profile } = useAuth();
   const { t } = useLanguage();
   const { dateRange } = useFinance();
+  const { navigationData, clearNavigationData } = useNavigation();
   const [activeTab, setActiveTab] = useState<FinanceTab>('purchase');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isMobile);
   const [editJournalEntryId, setEditJournalEntryId] = useState<string | null>(null);
   const [payInvoice, setPayInvoice] = useState<{ id: string; invoice_number: string; supplier_id: string; balance_amount: number } | null>(null);
+  const [focusExpenseId, setFocusExpenseId] = useState<string | null>(null);
+  const [focusPettyCashId, setFocusPettyCashId] = useState<string | null>(null);
   const canManage = profile?.role === 'admin' || profile?.role === 'accounts';
 
   const handlePayInvoice = (invoice: { id: string; invoice_number: string; supplier_id: string; balance_amount: number }) => {
@@ -179,6 +183,25 @@ function FinanceContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (!navigationData?.sourceType || !navigationData?.sourceId) return;
+
+    if (navigationData.sourceType === 'expense') {
+      setActiveTab('expenses');
+      setFocusExpenseId(String(navigationData.sourceId));
+      setFocusPettyCashId(null);
+      clearNavigationData();
+      return;
+    }
+
+    if (navigationData.sourceType === 'petty_cash') {
+      setActiveTab('petty_cash');
+      setFocusPettyCashId(String(navigationData.sourceId));
+      setFocusExpenseId(null);
+      clearNavigationData();
+    }
+  }, [navigationData, clearNavigationData]);
+
   const renderContent = () => {
     switch (activeTab) {
       case 'purchase':
@@ -197,9 +220,22 @@ function FinanceContent() {
       case 'contra':
         return <FundTransferManager canManage={canManage} />;
       case 'expenses':
-        return <ExpenseManager canManage={canManage} />;
+        return (
+          <ExpenseManager
+            canManage={canManage}
+            initialViewExpenseId={focusExpenseId}
+            onInitialViewHandled={() => setFocusExpenseId(null)}
+          />
+        );
       case 'petty_cash':
-        return <PettyCashManager canManage={canManage} onNavigateToFundTransfer={() => setActiveTab('contra')} />;
+        return (
+          <PettyCashManager
+            canManage={canManage}
+            onNavigateToFundTransfer={() => setActiveTab('contra')}
+            initialViewTransactionId={focusPettyCashId}
+            onInitialViewHandled={() => setFocusPettyCashId(null)}
+          />
+        );
       case 'ledger':
         return <AccountLedger />;
       case 'journal_register':

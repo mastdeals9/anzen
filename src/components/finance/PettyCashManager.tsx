@@ -72,6 +72,8 @@ interface BankAccount {
 interface PettyCashManagerProps {
   canManage: boolean;
   onNavigateToFundTransfer?: () => void;
+  initialViewTransactionId?: string | null;
+  onInitialViewHandled?: () => void;
 }
 
 const expenseCategories = [
@@ -302,7 +304,7 @@ const expenseCategories = [
   },
 ];
 
-export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyCashManagerProps) {
+export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialViewTransactionId, onInitialViewHandled }: PettyCashManagerProps) {
   const [approvalLoading, setApprovalLoading] = useState<string | null>(null);
   const [pcRejectionModalOpen, setPcRejectionModalOpen] = useState(false);
   const [pcRejectionTarget, setPcRejectionTarget] = useState<string | null>(null);
@@ -433,6 +435,59 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
       subscription.unsubscribe();
     };
   }, [loadData]);
+
+  useEffect(() => {
+    if (!initialViewTransactionId) return;
+
+    const openTransaction = async () => {
+      const openByData = async (transaction: PettyCashTransaction) => {
+        setViewingTransaction(transaction);
+        setViewModalOpen(true);
+        const docs = transaction.petty_cash_documents || [];
+        if (docs.length) {
+          const entries = await Promise.all(
+            docs.map(async (doc) => [doc.file_url, await getSignedUrl(doc.file_url)] as [string, string])
+          );
+          setSignedUrlCache(prev => ({ ...prev, ...Object.fromEntries(entries) }));
+        }
+      };
+
+      const existing = transactions.find(tx => tx.id === initialViewTransactionId);
+      if (existing) {
+        await openByData(existing);
+        onInitialViewHandled?.();
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('petty_cash_transactions')
+        .select(`
+          *,
+          bank_accounts:bank_account_id (
+            account_name,
+            bank_name,
+            alias,
+            currency
+          ),
+          import_containers:import_container_id (
+            container_ref
+          ),
+          delivery_challans:delivery_challan_id (
+            challan_number
+          ),
+          petty_cash_documents (*)
+        `)
+        .eq('id', initialViewTransactionId)
+        .maybeSingle();
+
+      if (!error && data) {
+        await openByData(data as PettyCashTransaction);
+      }
+      onInitialViewHandled?.();
+    };
+
+    openTransaction();
+  }, [initialViewTransactionId, transactions, onInitialViewHandled]);
 
   const handleRefresh = () => {
     setRefreshing(true);

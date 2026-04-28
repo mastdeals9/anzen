@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
@@ -15,20 +15,32 @@ interface PendingApproval {
   date: string;
 }
 
+interface CompanyRef {
+  company_name?: string;
+}
+
 export function ApprovalNotifications() {
   const { profile } = useAuth();
-  const { setCurrentPage } = useNavigation();
+  const { setCurrentPage, setNavigationData } = useNavigation();
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [showNotification, setShowNotification] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissedSignature, setDismissedSignature] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (profile?.role === 'admin') {
-      loadPendingApprovals();
+  const getDismissKey = useCallback(() => `approval_popup_dismissed_${profile?.id ?? 'unknown'}`, [profile?.id]);
+  const getSignature = useCallback((approvals: PendingApproval[]) =>
+    approvals
+      .map(item => `${item.type}:${item.id}`)
+      .sort()
+      .join('|'), []);
+
+  const getCompanyName = (rawCustomer: unknown) => {
+    if (Array.isArray(rawCustomer)) {
+      return (rawCustomer[0] as CompanyRef | undefined)?.company_name || 'Unknown';
     }
-  }, [profile]);
+    return (rawCustomer as CompanyRef | null)?.company_name || 'Unknown';
+  };
 
-  const loadPendingApprovals = async () => {
+  const loadPendingApprovals = useCallback(async () => {
     try {
       const approvals: PendingApproval[] = [];
 
@@ -64,13 +76,13 @@ export function ApprovalNotifications() {
 
       soRes.data?.forEach(so => approvals.push({
         id: so.id, type: 'sales_order', number: so.so_number,
-        description: (so.customers as any)?.company_name || 'Unknown',
+        description: getCompanyName(so.customers),
         amount: so.total_amount, currency: so.currency || 'IDR', date: so.so_date,
       }));
 
       dcRes.data?.forEach(ch => approvals.push({
         id: ch.id, type: 'delivery_challan', number: ch.challan_number,
-        description: (ch.customers as any)?.company_name || 'Unknown',
+        description: getCompanyName(ch.customers),
         date: ch.challan_date,
       }));
 
@@ -87,25 +99,76 @@ export function ApprovalNotifications() {
       }));
 
       setPendingApprovals(approvals);
-      if (approvals.length > 0 && !dismissed) {
+      const currentSignature = getSignature(approvals);
+      if (approvals.length > 0 && currentSignature !== dismissedSignature) {
         setShowNotification(true);
+      } else {
+        setShowNotification(false);
       }
     } catch (error) {
       console.error('Error loading pending approvals:', error);
     }
-  };
+  }, [dismissedSignature, getSignature]);
+
+  useEffect(() => {
+    if (profile?.role !== 'admin') return;
+
+    try {
+      const stored = localStorage.getItem(getDismissKey());
+      setDismissedSignature(stored || null);
+    } catch {
+      setDismissedSignature(null);
+    }
+
+    loadPendingApprovals();
+
+    const interval = setInterval(() => {
+      loadPendingApprovals();
+    }, 60000);
+
+    const channel = supabase
+      .channel('approval-popup-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales_orders' }, () => loadPendingApprovals())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_challans' }, () => loadPendingApprovals())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'finance_expenses' }, () => loadPendingApprovals())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'petty_cash_transactions' }, () => loadPendingApprovals())
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      channel.unsubscribe();
+    };
+  }, [getDismissKey, loadPendingApprovals, profile?.role]);
 
   const handleViewItem = (item: PendingApproval) => {
     setShowNotification(false);
-    setDismissed(true);
+    const signature = getSignature(pendingApprovals);
+    try {
+      localStorage.setItem(getDismissKey(), signature);
+      setDismissedSignature(signature);
+    } catch {
+      // Ignore storage failures
+    }
     if (item.type === 'sales_order') setCurrentPage('sales-orders');
     else if (item.type === 'delivery_challan') setCurrentPage('delivery-challan');
-    else setCurrentPage('finance');
+    else {
+      setNavigationData({
+        sourceType: item.type,
+        sourceId: item.id,
+      });
+      setCurrentPage('finance');
+    }
   };
 
   const handleDismiss = () => {
     setShowNotification(false);
-    setDismissed(true);
+    const signature = getSignature(pendingApprovals);
+    try {
+      localStorage.setItem(getDismissKey(), signature);
+      setDismissedSignature(signature);
+    } catch {
+      // Ignore storage failures
+    }
   };
 
   if (!showNotification || pendingApprovals.length === 0) return null;
