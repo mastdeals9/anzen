@@ -36,7 +36,7 @@ interface UserProfile {
   username?: string;
   email: string;
   full_name: string;
-  role: 'admin' | 'accounts' | 'sales' | 'warehouse' | 'auditor_ca';
+  role: 'admin' | 'manager' | 'accounts' | 'sales' | 'warehouse' | 'auditor_ca';
   language?: string;
   is_active: boolean;
   created_at?: string;

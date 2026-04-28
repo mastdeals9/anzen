@@ -9,7 +9,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export type UserRole = 'admin' | 'accounts' | 'sales' | 'warehouse' | 'auditor_ca';
+export type UserRole = 'admin' | 'manager' | 'accounts' | 'sales' | 'warehouse' | 'auditor_ca';
 
 export interface UserProfile {
   id: string;
