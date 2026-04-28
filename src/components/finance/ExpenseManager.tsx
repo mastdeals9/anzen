@@ -311,6 +311,8 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
   const [editingExpense, setEditingExpense] = useState<FinanceExpense | null>(null);
   const [viewingExpense, setViewingExpense] = useState<FinanceExpense | null>(null);
   const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [linkedDCQuickView, setLinkedDCQuickView] = useState<{ challan: any; items: any[] } | null>(null);
+  const [linkedDCQuickViewLoading, setLinkedDCQuickViewLoading] = useState(false);
   const [signedUrlCache, setSignedUrlCache] = useState<Record<string, string>>({});
   const [filterType, setFilterType] = useState<'all' | 'import' | 'sales' | 'staff' | 'operations' | 'admin'>('all');
   const [reconFilter, setReconFilter] = useState<'all' | 'reconciled' | 'not_reconciled'>('all');
@@ -337,6 +339,51 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
     payment_reference: '',
     document_urls: [] as string[],
   });
+
+  useEffect(() => {
+    if (!linkedDCQuickView) return;
+
+    const handleEscapeForLinkedDC = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        setLinkedDCQuickView(null);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscapeForLinkedDC, true);
+    return () => document.removeEventListener('keydown', handleEscapeForLinkedDC, true);
+  }, [linkedDCQuickView]);
+
+  const openLinkedDCQuickView = async () => {
+    if (!viewingExpense?.delivery_challan_id) return;
+
+    setLinkedDCQuickViewLoading(true);
+    try {
+      const { data: challan, error: challanError } = await supabase
+        .from('delivery_challans')
+        .select(`*, customers(company_name, address, city, phone, npwp, pharmacy_license, gst_vat_type)`)
+        .eq('id', viewingExpense.delivery_challan_id)
+        .maybeSingle();
+
+      if (challanError) throw challanError;
+      if (!challan) throw new Error('Linked delivery challan not found');
+
+      const { data: items, error: itemsError } = await supabase
+        .from('delivery_challan_items')
+        .select(`*, products(product_name, product_code, unit), batches(batch_number)`)
+        .eq('challan_id', challan.id);
+
+      if (itemsError) throw itemsError;
+
+      setLinkedDCQuickView({ challan, items: items || [] });
+    } catch (error) {
+      console.error('Error loading linked DC quick view:', error);
+      alert('Failed to open Delivery Challan details');
+    } finally {
+      setLinkedDCQuickViewLoading(false);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -2041,6 +2088,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
           onClose={() => {
             setViewModalOpen(false);
             setViewingExpense(null);
+            setLinkedDCQuickView(null);
           }}
           title="Expense Details"
           maxWidth="max-w-3xl"
@@ -2127,9 +2175,77 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 {viewingExpense.delivery_challans && (
                   <div className="flex items-center gap-2 text-sm">
                     <Truck className="w-4 h-4 text-green-600" />
-                    <span className="text-green-700 font-medium">Delivery Challan: {viewingExpense.delivery_challans.challan_number}</span>
+                    <button
+                      type="button"
+                      onClick={openLinkedDCQuickView}
+                      disabled={linkedDCQuickViewLoading}
+                      className="text-green-700 font-medium hover:text-green-800 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Delivery Challan: {viewingExpense.delivery_challans.challan_number}
+                      {linkedDCQuickViewLoading ? ' (opening...)' : ''}
+                    </button>
                   </div>
                 )}
+              </div>
+            )}
+
+            {linkedDCQuickView && (
+              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+                <div className="w-full max-w-2xl max-h-[80vh] overflow-hidden rounded-lg bg-white shadow-2xl">
+                  <div className="flex items-center justify-between border-b px-4 py-3">
+                    <h4 className="text-base font-semibold text-gray-900">
+                      Delivery Challan {linkedDCQuickView.challan.challan_number}
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setLinkedDCQuickView(null)}
+                      className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <div className="space-y-4 overflow-y-auto p-4 text-sm">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <div className="text-xs text-gray-500 uppercase font-medium">Date</div>
+                        <div className="font-medium">{new Date(linkedDCQuickView.challan.challan_date).toLocaleDateString('id-ID')}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500 uppercase font-medium">Customer</div>
+                        <div className="font-medium">{linkedDCQuickView.challan.customers?.company_name || '-'}</div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-xs text-gray-500 uppercase font-medium mb-2">Items</div>
+                      {linkedDCQuickView.items.length === 0 ? (
+                        <div className="text-gray-500">No items found for this DC.</div>
+                      ) : (
+                        <div className="overflow-x-auto border rounded">
+                          <table className="min-w-full text-sm">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-semibold text-gray-600">Product</th>
+                                <th className="px-3 py-2 text-left font-semibold text-gray-600">Batch</th>
+                                <th className="px-3 py-2 text-right font-semibold text-gray-600">Qty</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {linkedDCQuickView.items.map((item) => (
+                                <tr key={item.id} className="border-t">
+                                  <td className="px-3 py-2">{item.products?.product_name || '-'}</td>
+                                  <td className="px-3 py-2">{item.batches?.batch_number || '-'}</td>
+                                  <td className="px-3 py-2 text-right">{Number(item.quantity || 0).toLocaleString('id-ID')}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500">Press Esc to close.</div>
+                  </div>
+                </div>
               </div>
             )}
 
