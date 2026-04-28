@@ -4,10 +4,15 @@ import {
   Mail, CheckCircle, XCircle, Clock, ChevronDown, ChevronRight,
   AlertTriangle, Paperclip, RefreshCw
 } from 'lucide-react';
+import { applyEmailTemplateVariables } from '../../utils/crmEmailPersonalization';
 
 interface Campaign {
   id: string;
   subject: string;
+  template_id: string | null;
+  email_body: string | null;
+  sender_name: string | null;
+  attachments_context: Array<{ filename: string; mimeType: string; data: string }> | null;
   total_recipients: number;
   sent_count: number;
   failed_count: number;
@@ -21,6 +26,7 @@ interface Campaign {
 
 interface Recipient {
   id: string;
+  contact_id: string | null;
   company_name: string;
   email: string;
   status: 'pending' | 'sent' | 'failed';
@@ -41,6 +47,9 @@ export function DeliveryLog() {
   const [recipients, setRecipients] = useState<Record<string, Recipient[]>>({});
   const [recipientsLoading, setRecipientsLoading] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'partial' | 'failed'>('all');
+  const [retryingRecipients, setRetryingRecipients] = useState<Record<string, boolean>>({});
+  const [retryingCampaigns, setRetryingCampaigns] = useState<Record<string, boolean>>({});
+  const [retryResult, setRetryResult] = useState<Record<string, { type: 'success' | 'error'; message: string }>>({});
 
   useEffect(() => {
     loadCampaigns();
@@ -68,7 +77,7 @@ export function DeliveryLog() {
     setRecipientsLoading(id);
     const { data } = await supabase
       .from('bulk_email_recipients')
-      .select('id, company_name, email, status, error_message, sent_at')
+      .select('id, contact_id, company_name, email, status, error_message, sent_at')
       .eq('campaign_id', id)
       .order('status', { ascending: true }); // failed first
     setRecipients(prev => ({ ...prev, [id]: data || [] }));
@@ -110,6 +119,183 @@ export function DeliveryLog() {
     if (status === 'sent') return <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />;
     if (status === 'failed') return <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />;
     return <Clock className="w-4 h-4 text-gray-300 flex-shrink-0" />;
+  };
+
+  const retryFailedRecipients = async (campaignId: string, recipientIds?: string[]) => {
+    const targetRecipients = (recipients[campaignId] || []).filter(r =>
+      r.status === 'failed' && (!recipientIds || recipientIds.includes(r.id))
+    );
+
+    if (targetRecipients.length === 0) {
+      return;
+    }
+
+    if (recipientIds) {
+      const next = { ...retryingRecipients };
+      targetRecipients.forEach(r => {
+        next[r.id] = true;
+      });
+      setRetryingRecipients(next);
+    } else {
+      setRetryingCampaigns(prev => ({ ...prev, [campaignId]: true }));
+    }
+    setRetryResult(prev => ({ ...prev, [campaignId]: { type: 'success', message: 'Retry in progress…' } }));
+
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData.user) throw new Error('Not authenticated');
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) throw new Error('Not authenticated');
+
+      const { data: campaign } = await supabase
+        .from('bulk_email_campaigns')
+        .select('id, subject, template_id, email_body, sender_name, attachments_context')
+        .eq('id', campaignId)
+        .single();
+
+      if (!campaign) throw new Error('Campaign metadata not found');
+
+      let campaignBody = campaign.email_body || '';
+      if (!campaignBody && campaign.template_id) {
+        const { data: template } = await supabase
+          .from('crm_email_templates')
+          .select('body')
+          .eq('id', campaign.template_id)
+          .maybeSingle();
+        if (template?.body) {
+          campaignBody = template.body;
+        }
+      }
+
+      if (!campaignBody) {
+        throw new Error('Campaign body/template metadata is missing, cannot retry send');
+      }
+
+      const contactIds = targetRecipients.map(r => r.contact_id).filter((id): id is string => Boolean(id));
+      const { data: contacts } = contactIds.length > 0
+        ? await supabase
+          .from('crm_contacts')
+          .select('id, company_name, contact_person, email')
+          .in('id', contactIds)
+        : { data: [] as Array<{ id: string; company_name: string; contact_person: string | null; email: string }> };
+
+      const contactMap = new Map((contacts || []).map(c => [c.id, c]));
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      let sentCount = 0;
+      let failedCount = 0;
+
+      for (const row of targetRecipients) {
+        const baseContact = row.contact_id ? contactMap.get(row.contact_id) : null;
+        const payloadContact = {
+          company_name: baseContact?.company_name || row.company_name,
+          contact_person: baseContact?.contact_person || null,
+          email: baseContact?.email || row.email,
+        };
+
+        const toEmails = (row.email || payloadContact.email)
+          .split(';')
+          .map((e: string) => e.trim())
+          .filter(Boolean);
+        const personalizedSubject = applyEmailTemplateVariables(campaign.subject, payloadContact);
+        const personalizedBody = applyEmailTemplateVariables(campaignBody, payloadContact);
+
+        try {
+          const response = await fetch(`${supabaseUrl}/functions/v1/send-bulk-email`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${sessionData.session.access_token}`,
+            },
+            body: JSON.stringify({
+              userId: authData.user.id,
+              toEmails,
+              subject: personalizedSubject,
+              body: personalizedBody,
+              contactId: row.contact_id,
+              senderName: campaign.sender_name || '',
+              isHtml: true,
+              attachments: campaign.attachments_context || [],
+              googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID,
+              googleClientSecret: import.meta.env.VITE_GOOGLE_CLIENT_SECRET,
+            }),
+          });
+
+          const result = await response.json();
+          if (!result.success) {
+            const errorWithCode = result.code
+              ? `${result.code}: ${result.error || 'Unknown error'}`
+              : (result.error || 'Unknown error');
+            throw new Error(errorWithCode);
+          }
+
+          await supabase
+            .from('bulk_email_recipients')
+            .update({ status: 'sent', error_message: null, sent_at: new Date().toISOString() })
+            .eq('id', row.id);
+
+          sentCount++;
+        } catch (err: any) {
+          const errMsg = err?.message || 'Unknown error';
+          await supabase
+            .from('bulk_email_recipients')
+            .update({ status: 'failed', error_message: errMsg })
+            .eq('id', row.id);
+          failedCount++;
+        }
+      }
+
+      const { data: refreshedRows } = await supabase
+        .from('bulk_email_recipients')
+        .select('id, contact_id, company_name, email, status, error_message, sent_at')
+        .eq('campaign_id', campaignId);
+
+      const totalSent = (refreshedRows || []).filter(r => r.status === 'sent').length;
+      const totalFailed = (refreshedRows || []).filter(r => r.status === 'failed').length;
+      const campaignStatus = totalFailed === 0 ? 'completed' : totalSent === 0 ? 'failed' : 'partial';
+
+      await supabase
+        .from('bulk_email_campaigns')
+        .update({
+          sent_count: totalSent,
+          failed_count: totalFailed,
+          status: campaignStatus,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', campaignId);
+
+      setRecipients(prev => ({ ...prev, [campaignId]: refreshedRows || [] }));
+      setCampaigns(prev => prev.map(c => c.id === campaignId
+        ? { ...c, sent_count: totalSent, failed_count: totalFailed, status: campaignStatus }
+        : c
+      ));
+      setRetryResult(prev => ({
+        ...prev,
+        [campaignId]: {
+          type: failedCount > 0 ? 'error' : 'success',
+          message: `Retry finished: ${sentCount} sent, ${failedCount} failed.`,
+        },
+      }));
+    } catch (err: any) {
+      setRetryResult(prev => ({
+        ...prev,
+        [campaignId]: {
+          type: 'error',
+          message: err?.message || 'Failed to retry recipients.',
+        },
+      }));
+    } finally {
+      if (recipientIds) {
+        setRetryingRecipients(prev => {
+          const next = { ...prev };
+          targetRecipients.forEach(r => {
+            delete next[r.id];
+          });
+          return next;
+        });
+      } else {
+        setRetryingCampaigns(prev => ({ ...prev, [campaignId]: false }));
+      }
+    }
   };
 
   return (
@@ -216,14 +402,28 @@ export function DeliveryLog() {
                       {/* Failed recipients at top, highlighted */}
                       {(recipients[c.id] || []).filter(r => r.status === 'failed').length > 0 && (
                         <div className="bg-red-50 border-b border-red-100 px-5 py-3">
-                          <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-2">
-                            Failed — action needed
-                          </p>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">
+                              Failed — action needed
+                            </p>
+                            <button
+                              onClick={() => retryFailedRecipients(c.id)}
+                              disabled={retryingCampaigns[c.id]}
+                              className="text-xs px-2.5 py-1 rounded-md border border-red-300 text-red-700 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {retryingCampaigns[c.id] ? 'Retrying…' : 'Retry all failed'}
+                            </button>
+                          </div>
+                          {retryResult[c.id] && (
+                            <p className={`text-xs mb-2 ${retryResult[c.id].type === 'error' ? 'text-red-700' : 'text-emerald-700'}`}>
+                              {retryResult[c.id].message}
+                            </p>
+                          )}
                           <div className="space-y-2">
                             {(recipients[c.id] || []).filter(r => r.status === 'failed').map(r => (
                               <div key={r.id} className="flex items-start gap-3 bg-white rounded-lg px-3 py-2.5 border border-red-200">
                                 <XCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-                                <div className="min-w-0">
+                                <div className="min-w-0 flex-1">
                                   <p className="text-sm font-medium text-gray-800">{r.company_name}</p>
                                   <p className="text-xs text-gray-500">{r.email}</p>
                                   {r.error_message && (
@@ -232,6 +432,13 @@ export function DeliveryLog() {
                                     </p>
                                   )}
                                 </div>
+                                <button
+                                  onClick={() => retryFailedRecipients(c.id, [r.id])}
+                                  disabled={Boolean(retryingRecipients[r.id] || retryingCampaigns[c.id])}
+                                  className="text-xs px-2.5 py-1 rounded-md border border-red-300 text-red-700 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {retryingRecipients[r.id] ? 'Retrying…' : 'Retry'}
+                                </button>
                               </div>
                             ))}
                           </div>
