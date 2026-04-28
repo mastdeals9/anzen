@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { Mail, Send, Paperclip, Save, FileText, Loader } from 'lucide-react';
 import { Modal } from '../Modal';
 import { showToast } from '../ToastNotification';
+import { applyEmailTemplateVariables } from '../../utils/crmEmailPersonalization';
 
 interface EmailTemplate {
   id: string;
@@ -65,19 +66,8 @@ export function EmailComposer({ inquiry, onClose, onSent }: EmailComposerProps) 
     let filledBody = template.body;
 
     if (inquiry) {
-      filledSubject = filledSubject
-        .replace(/\{\{company_name\}\}/g, inquiry.company_name)
-        .replace(/\{\{contact_person\}\}/g, inquiry.contact_person || '')
-        .replace(/\{\{product\}\}/g, inquiry.product_name)
-        .replace(/\{\{quantity\}\}/g, inquiry.quantity)
-        .replace(/\{\{inquiry_number\}\}/g, inquiry.inquiry_number);
-
-      filledBody = filledBody
-        .replace(/\{\{company_name\}\}/g, inquiry.company_name)
-        .replace(/\{\{contact_person\}\}/g, inquiry.contact_person || 'Sir/Madam')
-        .replace(/\{\{product\}\}/g, inquiry.product_name)
-        .replace(/\{\{quantity\}\}/g, inquiry.quantity)
-        .replace(/\{\{inquiry_number\}\}/g, inquiry.inquiry_number);
+      filledSubject = applyEmailTemplateVariables(filledSubject, inquiry);
+      filledBody = applyEmailTemplateVariables(filledBody, inquiry);
     }
 
     setSubject(filledSubject);

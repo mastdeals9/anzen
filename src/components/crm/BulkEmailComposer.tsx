@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { showToast } from '../ToastNotification';
 import { openGmailReconnectPopup } from './gmailReconnect';
+import { applyEmailTemplateVariables, getDisplayContactName } from '../../utils/crmEmailPersonalization';
 
 interface EmailTemplate {
   id: string;
@@ -45,6 +46,8 @@ interface AttachedFile {
 const VARIABLES = [
   { label: 'Company Name', value: '{{company_name}}' },
   { label: 'Contact Person', value: '{{contact_person}}' },
+  { label: 'Customer Name', value: '{{Customer_name}}' },
+  { label: 'Salutation', value: '{{salutation}}' },
 ];
 
 export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: BulkEmailComposerProps) {
@@ -145,17 +148,13 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
     if (url) execFormat('createLink', url);
   };
 
-  const personalizeContent = (html: string, customer: SelectedCustomer): string => {
-    return html
-      .replace(/\{\{company_name\}\}/g, customer.company_name)
-      .replace(/\{\{contact_person\}\}/g, customer.contact_person || 'Sir/Madam');
-  };
+  const personalizeContent = (html: string, customer: SelectedCustomer): string => (
+    applyEmailTemplateVariables(html, customer)
+  );
 
-  const personalizeSubject = (subj: string, customer: SelectedCustomer): string => {
-    return subj
-      .replace(/\{\{company_name\}\}/g, customer.company_name)
-      .replace(/\{\{contact_person\}\}/g, customer.contact_person || 'Sir/Madam');
-  };
+  const personalizeSubject = (subj: string, customer: SelectedCustomer): string => (
+    applyEmailTemplateVariables(subj, customer)
+  );
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -448,7 +447,7 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
             <div className="flex-1 flex flex-wrap gap-1.5">
               {selectedCustomers.slice(0, 6).map(c => (
                 <span key={c.id} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded-full text-xs text-blue-800 font-medium">
-                  {c.contact_person ? `${c.contact_person} <${c.email}>` : c.email}
+                  {`${getDisplayContactName(c.contact_person)} <${c.email}>`}
                 </span>
               ))}
               {selectedCustomers.length > 6 && (
@@ -468,7 +467,7 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
               onChange={e => setSubject(e.target.value)}
               disabled={sending}
               className="flex-1 text-sm text-gray-900 outline-none bg-transparent placeholder-gray-400 disabled:opacity-60"
-              placeholder="Subject (use {{company_name}}, {{contact_person}})"
+              placeholder="Subject (use {{company_name}}, {{contact_person}}, {{customer_name}}, {{salutation}})"
             />
             {/* Template picker — inline with subject */}
             <div className="relative flex-shrink-0" ref={templateMenuRef}>

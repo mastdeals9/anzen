@@ -4,6 +4,7 @@ import { Send, Paperclip, X, ChevronDown, Loader, Minimize2, Maximize2, AlertCir
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import { openGmailReconnectPopup } from './gmailReconnect';
+import { applyEmailTemplateVariables, getDisplayContactName, getSalutation } from '../../utils/crmEmailPersonalization';
 
 interface Inquiry {
   id: string;
@@ -135,7 +136,7 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, mode = 'general', 
   };
 
   const generateBody = (emailMode: 'price' | 'coa' | 'general') => {
-    const salutation = `<p>Dear ${inquiry.contact_person || 'Sir/Madam'},</p>`;
+    const salutation = `<p>${getSalutation(inquiry.contact_person)}</p>`;
     const closing = `<p>Should you have any questions, please feel free to contact us.</p><p>Best regards,<br><strong>SA Pharma Jaya</strong></p>`;
 
     if (emailMode === 'price') {
@@ -174,31 +175,22 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, mode = 'general', 
   };
 
   const applyTemplate = (template: EmailTemplate) => {
-    const vars: Record<string, string> = {
-      '{{contact_person}}': inquiry.contact_person || 'Sir/Madam',
-      '{{company_name}}': inquiry.company_name,
-      '{{product_name}}': inquiry.product_name,
-      '{{specification}}': inquiry.specification || '-',
-      '{{quantity}}': inquiry.quantity,
-      '{{supplier_name}}': inquiry.supplier_name || '-',
-      '{{supplier_country}}': inquiry.supplier_country || '-',
-      '{{inquiry_number}}': inquiry.inquiry_number,
-      '{{user_name}}': currentUserName,
-      '{{offered_price}}': inquiry.offered_price
-        ? `${inquiry.offered_price_currency || 'USD'} ${inquiry.offered_price.toLocaleString()}`
-        : 'To be confirmed',
-    };
+    const offeredPriceText = inquiry.offered_price
+      ? `${inquiry.offered_price_currency || 'USD'} ${inquiry.offered_price.toLocaleString()}`
+      : 'To be confirmed';
 
-    let s = template.subject;
-    let b = template.body;
-    Object.entries(vars).forEach(([k, v]) => {
-      const rx = new RegExp(k.replace(/[{}]/g, '\\$&'), 'g');
-      s = s.replace(rx, v);
-      b = b.replace(rx, v);
-    });
-
-    setSubject(s);
-    setBody(b);
+    setSubject(applyEmailTemplateVariables(template.subject, {
+      ...inquiry,
+      contact_person: getDisplayContactName(inquiry.contact_person),
+      user_name: currentUserName,
+      offered_price: offeredPriceText,
+    }));
+    setBody(applyEmailTemplateVariables(template.body, {
+      ...inquiry,
+      contact_person: getDisplayContactName(inquiry.contact_person),
+      user_name: currentUserName,
+      offered_price: offeredPriceText,
+    }));
     setShowTemplates(false);
 
     supabase.from('crm_email_templates')
