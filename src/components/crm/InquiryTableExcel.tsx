@@ -38,6 +38,7 @@ interface InquiryItem {
   coa_sent_at?: string | null;
   sample_sent_at?: string | null;
   agency_letter_sent_at?: string | null;
+  others_sent_at?: string | null;
   status: string;
   pipeline_stage: string;
   document_sent: boolean;
@@ -77,6 +78,7 @@ interface Inquiry {
   coa_sent_at?: string | null;
   sample_sent_at?: string | null;
   agency_letter_sent_at?: string | null;
+  others_sent_at?: string | null;
   aceerp_no?: string | null;
   purchase_price?: number | null;
   purchase_price_currency?: string;
@@ -125,6 +127,12 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
   const [offeredPriceModalOpen, setOfferedPriceModalOpen] = useState(false);
   const [inquiryForOfferedPrice, setInquiryForOfferedPrice] = useState<Inquiry | null>(null);
   const [offeredPriceInput, setOfferedPriceInput] = useState('');
+  const [requirementDocumentModalOpen, setRequirementDocumentModalOpen] = useState(false);
+  const [inquiryForRequirementDocument, setInquiryForRequirementDocument] = useState<Inquiry | null>(null);
+  const [requirementDocumentType, setRequirementDocumentType] = useState<'coa' | 'sample' | 'agency_letter' | 'others' | null>(null);
+  const [requirementUploadFiles, setRequirementUploadFiles] = useState<File[]>([]);
+  const [requirementUploadNotes, setRequirementUploadNotes] = useState('');
+  const [savingRequirementDocument, setSavingRequirementDocument] = useState(false);
   const [editRequirementsModalOpen, setEditRequirementsModalOpen] = useState(false);
   const [requirementsForm, setRequirementsForm] = useState({
     price_required: false,
@@ -770,12 +778,32 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     }
   };
 
+  const formatRequirementType = (requirementType: 'price' | 'coa' | 'sample' | 'agency_letter' | 'others') => {
+    const labels: Record<'price' | 'coa' | 'sample' | 'agency_letter' | 'others', string> = {
+      price: 'Price',
+      coa: 'COA',
+      sample: 'Sample',
+      agency_letter: 'Agency Letter',
+      others: 'Others',
+    };
+    return labels[requirementType];
+  };
+
+  const resetRequirementDocumentModal = () => {
+    setRequirementDocumentModalOpen(false);
+    setInquiryForRequirementDocument(null);
+    setRequirementDocumentType(null);
+    setRequirementUploadFiles([]);
+    setRequirementUploadNotes('');
+    setSavingRequirementDocument(false);
+  };
+
   const markRequirementSent = async (inquiry: Inquiry, requirementType: 'price' | 'coa' | 'sample' | 'agency_letter' | 'others') => {
     const sentAtField = `${requirementType}_sent_at` as keyof Inquiry;
     const isSent = inquiry[sentAtField];
 
     if (isSent) {
-      if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to unmark ${requirementType.toUpperCase()} as sent?`, variant: 'warning' })) {
+      if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to unmark ${formatRequirementType(requirementType)} as sent?`, variant: 'warning' })) {
         return;
       }
 
@@ -788,7 +816,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
         if (error) throw error;
         onRefresh();
-        showToast({ type: 'success', title: 'Success', message: `${requirementType.toUpperCase()} unmarked!` });
+        showToast({ type: 'success', title: 'Success', message: `${formatRequirementType(requirementType)} unmarked!` });
       } catch (error) {
         console.error('Error unmarking requirement:', error);
         showToast({ type: 'error', title: 'Error', message: 'Failed to unmark. Please try again.' });
@@ -803,6 +831,15 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       return;
     }
 
+    if (['coa', 'sample', 'agency_letter', 'others'].includes(requirementType)) {
+      setInquiryForRequirementDocument(inquiry);
+      setRequirementDocumentType(requirementType as 'coa' | 'sample' | 'agency_letter' | 'others');
+      setRequirementUploadFiles([]);
+      setRequirementUploadNotes('');
+      setRequirementDocumentModalOpen(true);
+      return;
+    }
+
     try {
       const { error } = await supabase.rpc('mark_requirement_sent', {
         inquiry_id: inquiry.id,
@@ -811,10 +848,67 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
       if (error) throw error;
       onRefresh();
-      showToast({ type: 'success', title: 'Success', message: `${requirementType.toUpperCase()} marked as sent!` });
+      showToast({ type: 'success', title: 'Success', message: `${formatRequirementType(requirementType)} marked as sent!` });
     } catch (error) {
       console.error('Error marking requirement as sent:', error);
       showToast({ type: 'error', title: 'Error', message: 'Failed to mark as sent. Please try again.' });
+    }
+  };
+
+  const saveRequirementDocumentAndMarkSent = async () => {
+    if (!inquiryForRequirementDocument || !requirementDocumentType) return;
+    if (requirementUploadFiles.length === 0) {
+      showToast({
+        type: 'error',
+        title: 'File required',
+        message: `Please upload at least one file before marking ${formatRequirementType(requirementDocumentType)} as sent.`
+      });
+      return;
+    }
+
+    setSavingRequirementDocument(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const uploadedPaths: string[] = [];
+      for (const file of requirementUploadFiles) {
+        const sanitizedFileName = file.name.replace(/\s+/g, '_');
+        const filePath = `requirement-documents/${inquiryForRequirementDocument.id}/${requirementDocumentType}/${user.id}/${Date.now()}_${sanitizedFileName}`;
+        const { error: uploadError } = await supabase.storage.from('crm-documents').upload(filePath, file);
+        if (uploadError) throw uploadError;
+        uploadedPaths.push(filePath);
+      }
+
+      if (uploadedPaths.length === 0) {
+        throw new Error('No files were uploaded');
+      }
+
+      const { error: activityError } = await supabase.from('crm_activities').insert({
+        inquiry_id: inquiryForRequirementDocument.id,
+        activity_type: 'document',
+        subject: `${formatRequirementType(requirementDocumentType)} marked as sent`,
+        description: requirementUploadNotes.trim() || null,
+        attachment_urls: uploadedPaths,
+        activity_date: new Date().toISOString().split('T')[0],
+        is_completed: true,
+        created_by: user.id,
+      });
+      if (activityError) throw activityError;
+
+      const { error: markError } = await supabase.rpc('mark_requirement_sent', {
+        inquiry_id: inquiryForRequirementDocument.id,
+        requirement_type: requirementDocumentType
+      });
+      if (markError) throw markError;
+
+      resetRequirementDocumentModal();
+      onRefresh();
+      showToast({ type: 'success', title: 'Success', message: `${formatRequirementType(requirementDocumentType)} marked as sent.` });
+    } catch (error) {
+      console.error('Error uploading requirement document:', error);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to upload and mark requirement as sent. Please try again.' });
+      setSavingRequirementDocument(false);
     }
   };
 
@@ -2066,6 +2160,92 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
         </div>
       </Modal>
 
+      {/* Requirement Document Upload Modal */}
+      <Modal
+        isOpen={requirementDocumentModalOpen}
+        onClose={resetRequirementDocumentModal}
+        title={`Mark ${requirementDocumentType ? formatRequirementType(requirementDocumentType) : 'Requirement'} as Sent`}
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-gray-600">
+            Upload supporting document(s) before marking this requirement as sent.
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Inquiry: {inquiryForRequirementDocument?.inquiry_number || '-'}
+            </label>
+            <label className="block text-sm font-medium text-gray-700">
+              Product: {inquiryForRequirementDocument?.product_name || '-'}
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Upload file(s) *
+            </label>
+            <input
+              type="file"
+              multiple
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                if (files.length === 0) return;
+                setRequirementUploadFiles(prev => [...prev, ...files]);
+                e.target.value = '';
+              }}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg file:mr-3 file:px-3 file:py-1.5 file:border-0 file:bg-blue-50 file:text-blue-700 file:rounded-md hover:file:bg-blue-100"
+            />
+            {requirementUploadFiles.length > 0 ? (
+              <div className="mt-2 space-y-2 max-h-36 overflow-auto">
+                {requirementUploadFiles.map((file, index) => (
+                  <div key={`${file.name}-${index}`} className="flex items-center justify-between gap-2 text-xs bg-gray-50 border border-gray-200 rounded-md px-2 py-1.5">
+                    <span className="text-gray-700 truncate">{file.name}</span>
+                    <button
+                      onClick={() => setRequirementUploadFiles(prev => prev.filter((_, i) => i !== index))}
+                      className="text-red-600 hover:text-red-700"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-1 text-xs text-gray-500">At least one file is required to mark as sent.</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Notes (optional)
+            </label>
+            <textarea
+              rows={3}
+              value={requirementUploadNotes}
+              onChange={(e) => setRequirementUploadNotes(e.target.value)}
+              placeholder="Add any notes related to this document dispatch..."
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 mt-6">
+            <button
+              onClick={resetRequirementDocumentModal}
+              disabled={savingRequirementDocument}
+              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={saveRequirementDocumentAndMarkSent}
+              disabled={savingRequirementDocument || requirementUploadFiles.length === 0}
+              className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
+            >
+              {savingRequirementDocument ? 'Uploading...' : 'Upload & Mark Sent'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Edit Requirements Modal */}
       <Modal
         isOpen={editRequirementsModalOpen}
@@ -2142,4 +2322,3 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     </div>
   );
 }
-
