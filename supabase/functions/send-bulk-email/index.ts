@@ -7,20 +7,42 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-async function getValidAccessToken(supabase: any, connection: any): Promise<string> {
+interface OAuthClientCredentials {
+  clientId?: string;
+  clientSecret?: string;
+}
+
+async function getValidAccessToken(
+  supabase: any,
+  connection: any,
+  oauthClientCredentials: OAuthClientCredentials
+): Promise<string> {
   const tokenExpiry = new Date(connection.access_token_expires_at);
   const bufferMs = 5 * 60 * 1000;
 
-  if (tokenExpiry.getTime() - bufferMs > Date.now()) {
+  if (!Number.isNaN(tokenExpiry.getTime()) && tokenExpiry.getTime() - bufferMs > Date.now()) {
     return connection.access_token;
+  }
+
+  const clientId = oauthClientCredentials.clientId
+    || Deno.env.get("GOOGLE_CLIENT_ID")
+    || Deno.env.get("GMAIL_CLIENT_ID")
+    || "";
+  const clientSecret = oauthClientCredentials.clientSecret
+    || Deno.env.get("GOOGLE_CLIENT_SECRET")
+    || Deno.env.get("GMAIL_CLIENT_SECRET")
+    || "";
+
+  if (!clientId || !clientSecret) {
+    throw new Error("Missing Google OAuth client credentials for token refresh");
   }
 
   const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: Deno.env.get("GOOGLE_CLIENT_ID") || Deno.env.get("GMAIL_CLIENT_ID") || "",
-      client_secret: Deno.env.get("GOOGLE_CLIENT_SECRET") || Deno.env.get("GMAIL_CLIENT_SECRET") || "",
+      client_id: clientId,
+      client_secret: clientSecret,
       refresh_token: connection.refresh_token,
       grant_type: "refresh_token",
     }),
@@ -28,7 +50,9 @@ async function getValidAccessToken(supabase: any, connection: any): Promise<stri
 
   if (!refreshResponse.ok) {
     const errText = await refreshResponse.text();
-    throw new Error(`Failed to refresh access token: ${errText}`);
+    const refreshError = new Error(`Failed to refresh access token: ${errText}`);
+    (refreshError as any).code = "TOKEN_REFRESH_FAILED";
+    throw refreshError;
   }
 
   const refreshData = await refreshResponse.json();
@@ -134,7 +158,18 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { userId, toEmails, subject, body, contactId, senderName, isHtml, attachments } = await req.json();
+    const {
+      userId,
+      toEmails,
+      subject,
+      body,
+      contactId,
+      senderName,
+      isHtml,
+      attachments,
+      googleClientId,
+      googleClientSecret,
+    } = await req.json();
 
     if (!userId || !toEmails || !subject || !body) {
       return new Response(
@@ -157,7 +192,10 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const accessToken = await getValidAccessToken(supabase, connection);
+    const accessToken = await getValidAccessToken(supabase, connection, {
+      clientId: googleClientId,
+      clientSecret: googleClientSecret,
+    });
 
     const recipientEmails: string[] = Array.isArray(toEmails) ? toEmails : [toEmails];
     // Send to the first valid email of this customer (one individual email per call)
@@ -201,9 +239,20 @@ Deno.serve(async (req: Request) => {
     );
   } catch (error: any) {
     console.error("Error sending email:", error);
+    const isRefreshError = error?.code === "TOKEN_REFRESH_FAILED"
+      || String(error?.message || "").includes("Failed to refresh access token");
+
     return new Response(
-      JSON.stringify({ success: false, error: error.message || "Failed to send email" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: false,
+        error: error.message || "Failed to send email",
+        code: isRefreshError ? "TOKEN_REAUTH_REQUIRED" : "SEND_FAILED",
+        reauthRequired: isRefreshError,
+      }),
+      {
+        status: isRefreshError ? 401 : 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
     );
   }
 });

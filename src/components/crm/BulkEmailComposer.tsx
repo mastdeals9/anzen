@@ -6,6 +6,7 @@ import {
   AlignRight, Link2, ChevronDown, X, Minus, Plus, Type, Paperclip, Trash2
 } from 'lucide-react';
 import { showToast } from '../ToastNotification';
+import { openGmailReconnectPopup } from './gmailReconnect';
 
 interface EmailTemplate {
   id: string;
@@ -260,6 +261,7 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       let successCount = 0;
       let failCount = 0;
+      let stoppedForReauth = false;
 
       // Load the inserted recipient rows to get their IDs for updates
       const { data: recipientRows } = await supabase
@@ -305,6 +307,8 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
               senderName,
               isHtml: true,
               attachments: encodedAttachments,
+              googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID,
+              googleClientSecret: import.meta.env.VITE_GOOGLE_CLIENT_SECRET,
             }),
           });
 
@@ -334,21 +338,38 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
             ));
             successCount++;
           } else {
-            throw new Error(result.error || 'Unknown error');
+            const errorWithCode = result.code
+              ? `${result.code}: ${result.error || 'Unknown error'}`
+              : (result.error || 'Unknown error');
+            throw new Error(errorWithCode);
           }
 
           if (i < selectedCustomers.length - 1) {
             await new Promise(resolve => setTimeout(resolve, intervalSeconds * 1000));
           }
         } catch (err: any) {
+          const errMsg = err?.message || 'Unknown error';
+          const needsReauth = errMsg.includes('TOKEN_REAUTH_REQUIRED')
+            || errMsg.includes('Failed to refresh access token');
+
+          if (needsReauth) {
+            const shouldReconnect = window.confirm(
+              'Your Gmail connection has expired. Reconnect Gmail now?'
+            );
+            if (shouldReconnect) {
+              openGmailReconnectPopup();
+            }
+            stoppedForReauth = true;
+          }
+
           failCount++;
           if (recipientRowId) {
             await supabase.from('bulk_email_recipients')
-              .update({ status: 'failed', error_message: err.message || 'Unknown error' })
+              .update({ status: 'failed', error_message: errMsg })
               .eq('id', recipientRowId);
           }
           setSendResults(prev => prev.map((r, idx) =>
-            idx === i ? { ...r, status: 'error', error: err.message } : r
+            idx === i ? { ...r, status: 'error', error: errMsg } : r
           ));
         }
 
@@ -356,6 +377,10 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
         await supabase.from('bulk_email_campaigns')
           .update({ sent_count: successCount, failed_count: failCount })
           .eq('id', campaign.id);
+
+        if (stoppedForReauth) {
+          break;
+        }
       }
 
       // Finalize campaign status
