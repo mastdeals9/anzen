@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { FileText, Upload, X, ExternalLink, Trash2, Download } from 'lucide-react';
 import { Modal } from './Modal';
+import { buildNormalizedBaseKey, buildUniqueDocumentNames } from '../utils/documentNaming';
 
 interface SourceDocument {
   id: string;
@@ -9,6 +10,8 @@ interface SourceDocument {
   doc_type: string;
   file_url: string;
   original_filename: string;
+  display_name?: string | null;
+  storage_path?: string | null;
   file_size: number | null;
   notes: string | null;
   uploaded_at: string;
@@ -19,6 +22,7 @@ interface SourceDocumentsProps {
   onClose: () => void;
   sourceId: string;
   sourceName: string;
+  productName: string;
 }
 
 export function SourceDocuments({
@@ -26,6 +30,7 @@ export function SourceDocuments({
   onClose,
   sourceId,
   sourceName,
+  productName,
 }: SourceDocumentsProps) {
   const [documents, setDocuments] = useState<SourceDocument[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,9 +148,23 @@ export function SourceDocuments({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
+      const knownStoragePaths = documents
+        .map((doc) => doc.storage_path)
+        .filter((path): path is string => Boolean(path));
+
       for (const item of uploadQueue) {
-        const fileName = `${Date.now()}_${item.file.name}`;
-        const filePath = `${sourceId}/${fileName}`;
+        const normalizedBaseKey = buildNormalizedBaseKey(productName || 'product', sourceName || 'supplier', item.doc_type || 'other');
+        const existingStoragePaths = knownStoragePaths.filter((path) => path.split('/').pop()?.startsWith(normalizedBaseKey));
+
+        const fileNaming = buildUniqueDocumentNames({
+          product: productName || 'product',
+          supplier: sourceName || 'supplier',
+          docType: item.doc_type || 'other',
+          originalFilename: item.file.name,
+          existingStoragePaths,
+        });
+
+        const filePath = `${sourceId}/${fileNaming.fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('product-source-documents')
@@ -164,11 +183,15 @@ export function SourceDocuments({
             doc_type: item.doc_type,
             file_url: publicUrl,
             original_filename: item.file.name,
+            display_name: fileNaming.displayName,
+            storage_path: filePath,
             file_size: item.file.size,
             uploaded_by: user.id,
           }]);
 
         if (dbError) throw dbError;
+
+        knownStoragePaths.push(filePath);
       }
 
       setUploadQueue([]);
@@ -324,7 +347,7 @@ export function SourceDocuments({
                 >
                   <FileText className="w-5 h-5 text-blue-600 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{doc.original_filename}</p>
+                    <p className="text-sm font-medium text-gray-900 truncate">{doc.display_name || doc.original_filename}</p>
                     <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
                       <span className={`px-2 py-0.5 rounded font-medium ${getDocTypeColor(doc.doc_type)}`}>
                         {doc.doc_type}

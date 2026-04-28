@@ -407,6 +407,7 @@ export function ProductSources({ productId, productName }: ProductSourcesProps) 
           }}
           sourceId={selectedSourceId}
           sourceName={selectedSourceName}
+          productName={productName}
         />
       )}
     </div>

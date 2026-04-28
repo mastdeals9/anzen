@@ -5,6 +5,7 @@ import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import { openGmailReconnectPopup } from './gmailReconnect';
 import { applyEmailTemplateVariables, getDisplayContactName, getSalutation } from '../../utils/crmEmailPersonalization';
+import { buildNormalizedBaseKey, buildUniqueDocumentNames } from '../../utils/documentNaming';
 
 interface Inquiry {
   id: string;
@@ -231,12 +232,37 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, mode = 'general', 
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      // Upload attachments
+      // Upload attachments with normalized CRM document naming
       const uploadedUrls: string[] = [];
+      const attachmentFolder = `email-attachments/${user.id}`;
+
+      const { data: existingObjects, error: listError } = await supabase.storage
+        .from('crm-documents')
+        .list(attachmentFolder, { limit: 1000, sortBy: { column: 'name', order: 'asc' } });
+
+      if (listError) {
+        throw new Error(`Unable to inspect existing attachments: ${listError.message}`);
+      }
+
+      const existingStoragePaths = (existingObjects || []).map((obj) => `${attachmentFolder}/${obj.name}`);
+      const normalizedDocType = mode === 'coa' ? 'coa' : mode === 'price' ? 'quotation' : 'attachment';
+      const normalizedBaseKey = buildNormalizedBaseKey(inquiry.product_name || 'product', inquiry.supplier_name || inquiry.company_name || 'supplier', normalizedDocType);
+
       for (const att of attachments) {
-        const filePath = `email-attachments/${user.id}/${Date.now()}_${att.name}`;
+        const fileNaming = buildUniqueDocumentNames({
+          product: inquiry.product_name || 'product',
+          supplier: inquiry.supplier_name || inquiry.company_name || 'supplier',
+          docType: normalizedDocType,
+          originalFilename: att.name,
+          existingStoragePaths: existingStoragePaths.filter((path) => path.split('/').pop()?.startsWith(normalizedBaseKey)),
+        });
+
+        const filePath = `${attachmentFolder}/${fileNaming.fileName}`;
         const { error: upErr } = await supabase.storage.from('crm-documents').upload(filePath, att.file);
-        if (!upErr) uploadedUrls.push(filePath);
+        if (!upErr) {
+          uploadedUrls.push(filePath);
+          existingStoragePaths.push(filePath);
+        }
       }
 
       const toList = [toEmail.trim(), ...(ccEmail ? ccEmail.split(',').map(e => e.trim()).filter(Boolean) : [])];
