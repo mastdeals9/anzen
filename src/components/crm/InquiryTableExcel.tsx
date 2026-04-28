@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import {
   ChevronDown, X, Mail, Phone, FileText, Calendar,
   Flame, ArrowUp, Minus, Send, MessageSquare, CheckSquare,
-  Download, FileSpreadsheet, ArrowUpDown, ArrowDown, Check, XCircle, Plus, ChevronRight, Layers, ExternalLink
+  Download, FileSpreadsheet, ArrowUpDown, ArrowDown, Check, XCircle, Plus, ChevronRight, Layers, Clock
 } from 'lucide-react';
 import { Modal } from '../Modal';
 import { GmailLikeComposer } from './GmailLikeComposer';
@@ -49,6 +49,7 @@ interface InquiryItem {
 
 interface Inquiry {
   id: string;
+  customer_id?: string | null;
   inquiry_number: string;
   inquiry_date: string;
   product_name: string;
@@ -89,6 +90,14 @@ interface Inquiry {
   remarks: string | null;
   is_multi_product?: boolean;
   has_items?: boolean;
+}
+
+interface InquiryContextEvent {
+  id: string;
+  source: 'activity' | 'appointment' | 'email' | 'requirement';
+  title: string;
+  description?: string;
+  eventAt: string;
 }
 
 interface ColumnFilter {
@@ -143,6 +152,12 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
   });
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [inquiryItems, setInquiryItems] = useState<Map<string, InquiryItem[]>>(new Map());
+  const [contextEvents, setContextEvents] = useState<InquiryContextEvent[]>([]);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [appointmentModalOpen, setAppointmentModalOpen] = useState(false);
+  const [appointmentDate, setAppointmentDate] = useState('');
+  const [appointmentType, setAppointmentType] = useState<'meeting' | 'video_call' | 'phone_call'>('meeting');
+  const [appointmentNotes, setAppointmentNotes] = useState('');
   const filterRef = useRef<HTMLDivElement>(null);
 
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
@@ -166,6 +181,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     remarks: 200,
   });
   const [resizing, setResizing] = useState<{ column: string; startX: number; startWidth: number } | null>(null);
+  const selectedInquiry = filteredData.find(i => selectedRows.has(i.id));
 
   const statusOptions = [
     { value: 'new', label: 'New' },
@@ -222,6 +238,14 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     }
   }, [resizing]);
 
+  useEffect(() => {
+    if (!selectedInquiry?.id) {
+      setContextEvents([]);
+      return;
+    }
+    loadInquiryContextTimeline(selectedInquiry);
+  }, [selectedInquiry?.id, selectedInquiry?.customer_id]);
+
   const handleResizeStart = (column: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -261,6 +285,78 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       </div>
     </th>
   );
+
+  const loadInquiryContextTimeline = async (inquiry: Inquiry) => {
+    try {
+      setContextLoading(true);
+
+      const activitiesQuery = supabase
+        .from('crm_activities')
+        .select('id, inquiry_id, customer_id, activity_type, subject, description, created_at, follow_up_date')
+        .order('created_at', { ascending: false })
+        .limit(80);
+
+      const scopedActivitiesQuery = inquiry.customer_id
+        ? activitiesQuery.or(`inquiry_id.eq.${inquiry.id},customer_id.eq.${inquiry.customer_id}`)
+        : activitiesQuery.eq('inquiry_id', inquiry.id);
+
+      const scopedEmailQuery = supabase
+        .from('crm_email_activities')
+        .select('id, inquiry_id, email_type, subject, from_email, to_email, sent_date, created_at')
+        .eq('inquiry_id', inquiry.id)
+        .order('sent_date', { ascending: false })
+        .limit(40);
+
+      const [{ data: activities, error: activitiesError }, { data: emails, error: emailsError }] = await Promise.all([
+        scopedActivitiesQuery,
+        scopedEmailQuery,
+      ]);
+
+      if (activitiesError) throw activitiesError;
+      if (emailsError) throw emailsError;
+
+      const activityEvents: InquiryContextEvent[] = (activities || []).map((activity: any) => {
+        const appointmentTypes = ['meeting', 'video_call', 'phone_call'];
+        const isAppointment = appointmentTypes.includes(activity.activity_type);
+        const when = activity.follow_up_date || activity.created_at;
+        return {
+          id: `activity-${activity.id}`,
+          source: isAppointment ? 'appointment' : 'activity',
+          title: isAppointment
+            ? `${activity.activity_type.replace('_', ' ')} scheduled`
+            : (activity.subject || activity.activity_type?.replace('_', ' ') || 'Activity'),
+          description: activity.description || undefined,
+          eventAt: when,
+        };
+      });
+
+      const emailEvents: InquiryContextEvent[] = (emails || []).map((email: any) => ({
+        id: `email-${email.id}`,
+        source: 'email',
+        title: `${email.email_type === 'received' ? 'Email received' : 'Email sent'}${email.subject ? `: ${email.subject}` : ''}`,
+        description: Array.isArray(email.to_email) ? `To: ${email.to_email.join(', ')}` : undefined,
+        eventAt: email.sent_date || email.created_at,
+      }));
+
+      const requirementEvents: InquiryContextEvent[] = [
+        inquiry.price_sent_at ? { id: `${inquiry.id}-price`, source: 'requirement', title: 'Price sent', eventAt: inquiry.price_sent_at } : null,
+        inquiry.coa_sent_at ? { id: `${inquiry.id}-coa`, source: 'requirement', title: 'COA sent', eventAt: inquiry.coa_sent_at } : null,
+        inquiry.sample_sent_at ? { id: `${inquiry.id}-sample`, source: 'requirement', title: 'Sample sent', eventAt: inquiry.sample_sent_at } : null,
+        inquiry.agency_letter_sent_at ? { id: `${inquiry.id}-agency`, source: 'requirement', title: 'Agency letter sent', eventAt: inquiry.agency_letter_sent_at } : null,
+      ].filter(Boolean) as InquiryContextEvent[];
+
+      const mergedEvents = [...activityEvents, ...emailEvents, ...requirementEvents]
+        .filter((event) => !!event.eventAt)
+        .sort((a, b) => new Date(b.eventAt).getTime() - new Date(a.eventAt).getTime());
+
+      setContextEvents(mergedEvents);
+    } catch (error) {
+      console.error('Error loading inquiry context timeline:', error);
+      setContextEvents([]);
+    } finally {
+      setContextLoading(false);
+    }
+  };
 
   const applyFiltersAndSort = () => {
     let result = [...inquiries];
@@ -965,6 +1061,14 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     setLogCallModalOpen(true);
   };
 
+  const handleSendGeneralEmail = () => {
+    const inquiry = selectedInquiry || filteredData.find(i => selectedRows.has(i.id));
+    if (!inquiry) return;
+    setSelectedInquiryForEmail(inquiry);
+    setEmailMode('general');
+    setEmailModalOpen(true);
+  };
+
   const saveLogCall = async () => {
     const selectedInquiry = filteredData.find(i => selectedRows.has(i.id));
     if (!selectedInquiry) return;
@@ -984,6 +1088,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
 
       setLogCallModalOpen(false);
       setCallNotes('');
+      await loadInquiryContextTimeline(selectedInquiry);
       showToast({ type: 'success', title: 'Success', message: 'Call logged successfully!' });
       onRefresh();
     } catch (error) {
@@ -1022,6 +1127,53 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
     setFollowUpModalOpen(true);
   };
 
+  const handleScheduleAppointment = () => {
+    setAppointmentType('meeting');
+    setAppointmentDate('');
+    setAppointmentNotes('');
+    setAppointmentModalOpen(true);
+  };
+
+  const saveAppointment = async () => {
+    const inquiry = selectedInquiry || filteredData.find(i => selectedRows.has(i.id));
+    if (!inquiry || !appointmentDate) return;
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const titleByType: Record<string, string> = {
+        meeting: 'Meeting scheduled',
+        video_call: 'Video call scheduled',
+        phone_call: 'Phone call scheduled',
+      };
+
+      const { error } = await supabase.from('crm_activities').insert({
+        inquiry_id: inquiry.id,
+        customer_id: inquiry.customer_id || null,
+        activity_type: appointmentType,
+        subject: titleByType[appointmentType],
+        description: appointmentNotes || null,
+        activity_date: new Date().toISOString().split('T')[0],
+        follow_up_date: appointmentDate,
+        is_completed: false,
+        created_by: user.id,
+      });
+
+      if (error) throw error;
+
+      setAppointmentModalOpen(false);
+      setAppointmentDate('');
+      setAppointmentNotes('');
+      await loadInquiryContextTimeline(inquiry);
+      showToast({ type: 'success', title: 'Success', message: 'Appointment scheduled successfully!' });
+      onRefresh();
+    } catch (error) {
+      console.error('Error scheduling appointment:', error);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to schedule appointment. Please try again.' });
+    }
+  };
+
   const saveFollowUp = async () => {
     const selectedInquiry = filteredData.find(i => selectedRows.has(i.id));
     if (!selectedInquiry) return;
@@ -1043,6 +1195,7 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       setFollowUpModalOpen(false);
       setFollowUpDate('');
       setFollowUpNotes('');
+      await loadInquiryContextTimeline(selectedInquiry);
       showToast({ type: 'success', title: 'Success', message: 'Follow-up scheduled successfully!' });
       onRefresh();
     } catch (error) {
@@ -1085,8 +1238,6 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
       showToast({ type: 'error', title: 'Error', message: 'Failed to update requirements. Please try again.' });
     }
   };
-
-  const selectedInquiry = filteredData.find(i => selectedRows.has(i.id));
 
   return (
     <div className="space-y-4">
@@ -1222,6 +1373,91 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
                 title="Deselect"
               >
                 <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedInquiry && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-4">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Inquiry Context Timeline</h3>
+                <p className="text-xs text-gray-500">
+                  Inquiry #{selectedInquiry.inquiry_number} · {selectedInquiry.company_name}
+                </p>
+              </div>
+              <button
+                onClick={() => loadInquiryContextTimeline(selectedInquiry)}
+                className="text-xs px-2 py-1 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {contextLoading ? (
+              <div className="text-sm text-gray-500 py-6 text-center">Loading timeline…</div>
+            ) : contextEvents.length === 0 ? (
+              <div className="text-sm text-gray-500 py-6 text-center">No context events yet for this inquiry/customer.</div>
+            ) : (
+              <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                {contextEvents.map((event) => (
+                  <div key={event.id} className="border border-gray-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {event.source === 'email' && <Mail className="w-3.5 h-3.5 text-blue-600" />}
+                        {event.source === 'appointment' && <Calendar className="w-3.5 h-3.5 text-teal-600" />}
+                        {event.source === 'activity' && <Phone className="w-3.5 h-3.5 text-purple-600" />}
+                        {event.source === 'requirement' && <FileText className="w-3.5 h-3.5 text-green-600" />}
+                        <p className="text-sm font-medium text-gray-800">{event.title}</p>
+                      </div>
+                      <span className="text-xs text-gray-500 capitalize">{event.source}</span>
+                    </div>
+                    {event.description && (
+                      <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{event.description}</p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {new Date(event.eventAt).toLocaleString('en-GB', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">In-context Actions</h3>
+            <p className="text-xs text-gray-500 mb-3">Work this inquiry without switching global tabs.</p>
+            <div className="space-y-2">
+              <button
+                onClick={handleLogCall}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                <Phone className="w-4 h-4" />
+                Log Call
+              </button>
+              <button
+                onClick={handleScheduleAppointment}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-teal-700 bg-teal-50 border border-teal-200 rounded-md hover:bg-teal-100"
+              >
+                <Calendar className="w-4 h-4" />
+                Schedule Appointment
+              </button>
+              <button
+                onClick={handleSendGeneralEmail}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100"
+              >
+                <Mail className="w-4 h-4" />
+                Send Email
               </button>
             </div>
           </div>
@@ -2007,6 +2243,71 @@ export function InquiryTableExcel({ inquiries, onRefresh, canManage, onAddInquir
               className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
             >
               Save Call Log
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Schedule Follow-up Modal */}
+      <Modal
+        isOpen={appointmentModalOpen}
+        onClose={() => {
+          setAppointmentModalOpen(false);
+          setAppointmentDate('');
+          setAppointmentNotes('');
+        }}
+        title="Schedule Appointment"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Appointment Type *</label>
+            <select
+              value={appointmentType}
+              onChange={(e) => setAppointmentType(e.target.value as 'meeting' | 'video_call' | 'phone_call')}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="meeting">Meeting</option>
+              <option value="video_call">Video Call</option>
+              <option value="phone_call">Phone Call</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+            <input
+              type="date"
+              value={appointmentDate}
+              onChange={(e) => setAppointmentDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <textarea
+              value={appointmentNotes}
+              onChange={(e) => setAppointmentNotes(e.target.value)}
+              rows={3}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              placeholder="Agenda / preparation notes"
+            />
+          </div>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => {
+                setAppointmentModalOpen(false);
+                setAppointmentDate('');
+                setAppointmentNotes('');
+              }}
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={saveAppointment}
+              disabled={!appointmentDate}
+              className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50"
+            >
+              Schedule Appointment
             </button>
           </div>
         </div>
