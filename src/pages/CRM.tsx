@@ -4,7 +4,7 @@ import { Modal } from '../components/Modal';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Mail, Calendar as CalendarIcon, LayoutGrid, Users, Table, Inbox, Activity, Clock, Archive, BarChart3, Send } from 'lucide-react';
+import { Plus, Mail, Calendar as CalendarIcon, LayoutGrid, Users, Table, Inbox, Activity, Clock, Archive, BarChart3, Send, FolderOpen } from 'lucide-react';
 import { SalesTeam } from './SalesTeam';
 import { GmailBrowserInbox } from '../components/crm/GmailBrowserInbox';
 import { InquiryTableExcel } from '../components/crm/InquiryTableExcel';
@@ -17,6 +17,7 @@ import { ActivityLogger } from '../components/crm/ActivityLogger';
 import { AppointmentScheduler } from '../components/crm/AppointmentScheduler';
 import { ArchiveView } from '../components/crm/ArchiveView';
 import { DeliveryLog } from '../components/crm/DeliveryLog';
+import { ProductDocumentsPanel } from '../components/crm/ProductDocumentsPanel';
 import { CompactInquiryForm } from '../components/crm/CompactInquiryForm';
 import { CustomerSelectionDialog } from '../components/crm/CustomerSelectionDialog';
 import { CustomerConfirmationDialog } from '../components/crm/CustomerConfirmationDialog';
@@ -82,7 +83,7 @@ export function CRM() {
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'appointments' | 'archive' | 'sales-team' | 'delivery-log'>('table');
+  const [activeTab, setActiveTab] = useState<'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'appointments' | 'archive' | 'sales-team' | 'delivery-log' | 'documents'>('table');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingInquiry, setEditingInquiry] = useState<Inquiry | null>(null);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -564,6 +565,17 @@ export function CRM() {
                 <Send className="w-5 h-5" />
                 Delivery Log
               </button>
+              <button
+                onClick={() => setActiveTab('documents')}
+                className={`flex items-center gap-2 px-6 py-4 border-b-2 transition whitespace-nowrap ${
+                  activeTab === 'documents'
+                    ? 'border-blue-500 text-blue-600 font-medium'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <FolderOpen className="w-5 h-5" />
+                Documents
+              </button>
             </div>
           </div>
 
@@ -629,6 +641,10 @@ export function CRM() {
 
             {activeTab === 'delivery-log' && (
               <DeliveryLog />
+            )}
+
+            {activeTab === 'documents' && (
+              <ProductDocumentsPanel />
             )}
           </div>
         </div>
