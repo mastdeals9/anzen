@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { Send, Paperclip, X, ChevronDown, Loader, Minimize2, Maximize2, AlertCircle } from 'lucide-react';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
+import { openGmailReconnectPopup } from './gmailReconnect';
 
 interface Inquiry {
   id: string;
@@ -257,11 +258,16 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, mode = 'general', 
           body,
           isHtml: true,
           senderName: currentUserName,
+          googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID,
+          googleClientSecret: import.meta.env.VITE_GOOGLE_CLIENT_SECRET,
         },
       });
 
       if (fnErr || !fnData?.success) {
-        throw new Error(fnData?.error || fnErr?.message || 'Failed to send email');
+        const composedError = fnData?.code
+          ? `${fnData.code}: ${fnData?.error || fnErr?.message || 'Failed to send email'}`
+          : (fnData?.error || fnErr?.message || 'Failed to send email');
+        throw new Error(composedError);
       }
 
       // Log to DB
@@ -296,7 +302,20 @@ export function GmailLikeComposer({ isOpen, onClose, inquiry, mode = 'general', 
       onClose();
     } catch (err: any) {
       console.error('Email send error:', err);
-      alert(err.message || 'Failed to send email. Please try again.');
+      const errorMessage = err.message || 'Failed to send email. Please try again.';
+      const needsReauth = errorMessage.includes('TOKEN_REAUTH_REQUIRED')
+        || errorMessage.includes('Failed to refresh access token');
+
+      if (needsReauth) {
+        const shouldReconnect = window.confirm(
+          'Your Gmail connection has expired. Reconnect Gmail now?'
+        );
+        if (shouldReconnect) {
+          openGmailReconnectPopup();
+        }
+      } else {
+        alert(errorMessage);
+      }
     } finally {
       setSending(false);
     }
