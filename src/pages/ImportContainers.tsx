@@ -350,7 +350,7 @@ export default function ImportContainers() {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-right">
                         <div className="text-sm text-gray-900 font-semibold">{formatCurrency(container.linked_expenses_total || 0, 'IDR')}</div>
-                        {container.total_import_expenses > 0 && container.total_import_expenses !== container.linked_expenses_total && (
+                        {container.total_import_expenses > 0 && (
                           <div className="text-xs text-gray-500">{t('importContainers.directCosts')}: {formatCurrency(container.total_import_expenses, 'IDR')}</div>
                         )}
                       </td>
