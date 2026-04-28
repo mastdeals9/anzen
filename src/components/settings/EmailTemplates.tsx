@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { FileText, Plus, Edit2, Trash2, Copy, CheckCircle, XCircle } from 'lucide-react';
+import { FileText, Plus, Edit2, Trash2, Copy, CheckCircle, XCircle, Sparkles } from 'lucide-react';
 import { Modal } from '../Modal';
 
 interface EmailTemplate {
@@ -14,6 +14,51 @@ interface EmailTemplate {
   is_active: boolean;
   created_at: string;
 }
+
+const PROFESSIONAL_TEMPLATE_PRESETS = [
+  {
+    template_name: 'Professional Follow-up (CTA)',
+    subject: '{{company_name}} | Follow-up on {{product_name}} inquiry',
+    category: 'follow_up',
+    variables: ['{{salutation}}', '{{company_name}}', '{{product_name}}', '{{inquiry_number}}', '{{cta_link}}', '{{user_name}}'],
+    body: `<div style="font-family:Arial,sans-serif;background:#f8fafc;padding:24px;">
+  <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+    <div style="background:#0f172a;padding:18px 24px;color:#ffffff;">
+      <h2 style="margin:0;font-size:18px;">SA Pharma Jaya</h2>
+      <p style="margin:6px 0 0;font-size:13px;opacity:0.9;">Inquiry Follow-up</p>
+    </div>
+    <div style="padding:24px;color:#334155;font-size:14px;line-height:1.6;">
+      <p style="margin-top:0;">{{salutation}}</p>
+      <p>Thank you for your interest in <strong>{{product_name}}</strong>. We prepared the details for your review.</p>
+      <p><strong>Inquiry Ref:</strong> {{inquiry_number}}</p>
+      <div style="margin:20px 0;">
+        <a href="{{cta_link}}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">View Offer Details</a>
+      </div>
+      <p>If you have any questions, simply reply to this email and our team will assist right away.</p>
+      <p style="margin-bottom:0;">Best regards,<br/><strong>{{user_name}}</strong><br/>SA Pharma Jaya</p>
+    </div>
+  </div>
+</div>`,
+  },
+  {
+    template_name: 'Professional Price Quotation',
+    subject: 'Quotation | {{product_name}} for {{company_name}}',
+    category: 'price_quote',
+    variables: ['{{salutation}}', '{{product_name}}', '{{quantity}}', '{{offered_price}}', '{{supplier_name}}', '{{supplier_country}}'],
+    body: `<div style="font-family:Arial,sans-serif;color:#1f2937;line-height:1.6;">
+  <p>{{salutation}}</p>
+  <p>Thank you for your inquiry. Please find our quotation details below:</p>
+  <table style="border-collapse:collapse;width:100%;max-width:560px;font-size:14px;">
+    <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Product</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">{{product_name}}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Quantity</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">{{quantity}}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Offered Price</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">{{offered_price}}</td></tr>
+    <tr><td style="padding:8px;border:1px solid #e5e7eb;"><strong>Origin</strong></td><td style="padding:8px;border:1px solid #e5e7eb;">{{supplier_name}}, {{supplier_country}}</td></tr>
+  </table>
+  <p>Please let us know if you would like us to reserve stock and proceed to the next step.</p>
+  <p>Best regards,<br/><strong>{{user_name}}</strong><br/>SA Pharma Jaya</p>
+</div>`,
+  },
+];
 
 export function EmailTemplates() {
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
@@ -38,6 +83,9 @@ export function EmailTemplates() {
 
   const availableVariables = [
     '{{contact_person}}',
+    '{{customer_name}}',
+    '{{Customer_name}}',
+    '{{salutation}}',
     '{{company_name}}',
     '{{product_name}}',
     '{{specification}}',
@@ -46,6 +94,8 @@ export function EmailTemplates() {
     '{{supplier_country}}',
     '{{inquiry_number}}',
     '{{user_name}}',
+    '{{cta_link}}',
+    '{{offered_price}}',
   ];
 
   useEffect(() => {
@@ -204,6 +254,43 @@ export function EmailTemplates() {
     });
   };
 
+  const installProfessionalTemplates = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const names = PROFESSIONAL_TEMPLATE_PRESETS.map(t => t.template_name);
+      const { data: existing } = await supabase
+        .from('crm_email_templates')
+        .select('template_name')
+        .in('template_name', names);
+
+      const existingSet = new Set((existing || []).map(t => t.template_name));
+      const toInsert = PROFESSIONAL_TEMPLATE_PRESETS
+        .filter(t => !existingSet.has(t.template_name))
+        .map(t => ({
+          ...t,
+          created_by: user.id,
+          is_active: true,
+          use_count: 0,
+        }));
+
+      if (toInsert.length === 0) {
+        alert('Professional templates are already installed.');
+        return;
+      }
+
+      const { error } = await supabase.from('crm_email_templates').insert(toInsert);
+      if (error) throw error;
+
+      alert(`Installed ${toInsert.length} professional template(s).`);
+      loadTemplates();
+    } catch (error: any) {
+      console.error('Error installing professional templates:', error);
+      alert(error.message || 'Failed to install professional templates');
+    }
+  };
+
 
   if (loading) {
     return (
@@ -235,6 +322,13 @@ export function EmailTemplates() {
         >
           <Plus className="w-4 h-4" />
           New Template
+        </button>
+        <button
+          onClick={installProfessionalTemplates}
+          className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition flex items-center gap-2"
+        >
+          <Sparkles className="w-4 h-4" />
+          Install Professional Templates
         </button>
       </div>
 
