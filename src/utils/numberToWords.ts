@@ -44,13 +44,16 @@ export function usdToWords(amount: number): string {
 
   const dollarPart = `${result || dollarWord} dollar${dollars !== 1 ? 's' : ''}`;
 
-  if (cents === 0) return capitalise(dollarPart);
+  if (cents === 0) return capitalize(dollarPart);
   const centPart = `${enChunk(cents)} cent${cents !== 1 ? 's' : ''}`;
-  return capitalise(`${dollarPart} and ${centPart}`);
+  return capitalize(`${dollarPart} and ${centPart}`);
 }
 
-function capitalise(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+function capitalize(input: string | null | undefined): string {
+  if (!input) return '';
+
+  const normalized = String(input).toLowerCase();
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 const idOnes = ['', 'satu', 'dua', 'tiga', 'empat', 'lima', 'enam', 'tujuh', 'delapan', 'sembilan',
@@ -92,5 +95,5 @@ export function idrToWords(amount: number): string {
   }
   if (remainder) parts.push(idHundreds(remainder));
 
-  return capitalise(parts.join(' ') + ' rupiah');
+  return capitalize(parts.join(' ') + ' rupiah');
 }
