@@ -5,6 +5,25 @@ import { AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 type Inquiry = { id: string; inquiry_number: string; company_name: string; product_name: string; status: string; inquiry_date: string; assigned_to?: string | null };
 
 type TimelineItem = { id: string; type: 'activity'|'email'|'document'; title: string; detail?: string | null; at: string; };
+type MinimalRow = Record<string, unknown> & { id: string };
+
+const isIgnorableSupabaseError = (error: { code?: string; message?: string } | null) => {
+  if (!error) return false;
+  return [
+    '42P01', // undefined table/relation
+    '42703', // undefined column
+    'PGRST116', // relation not found in schema cache
+  ].includes(error.code || '');
+};
+
+const logSupabaseError = (scope: string, error: { code?: string; message?: string } | null) => {
+  if (!error) return;
+  if (isIgnorableSupabaseError(error)) {
+    console.info(`[Inquiry360View] Optional ${scope} source unavailable: ${error.code ?? 'unknown'}`);
+    return;
+  }
+  console.error(`[Inquiry360View] Failed to load ${scope}:`, error);
+};
 
 export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -24,14 +43,22 @@ export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
         supabase.from('crm_product_documents').select('id,document_type,display_name,uploaded_at').eq('inquiry_id', selected.id).order('uploaded_at', { ascending: false }).limit(50),
       ]);
 
+      logSupabaseError('activities', activities.error);
+      logSupabaseError('emails', emails.error);
+      logSupabaseError('documents', docs.error);
+
+      const activityRows = (activities.error ? [] : (activities.data || [])) as MinimalRow[];
+      const emailRows = (emails.error ? [] : (emails.data || [])) as MinimalRow[];
+      const documentRows = (docs.error ? [] : (docs.data || [])) as MinimalRow[];
+
       const items: TimelineItem[] = [
-        ...((activities.data || []).map((a: any) => ({ id: a.id, type: 'activity' as const, title: a.subject || 'Activity', detail: a.description, at: a.created_at }))),
-        ...((emails.data || []).map((e: any) => ({ id: e.id, type: 'email' as const, title: e.subject || 'Email', detail: `${e.email_type}${e.to_email ? ` → ${Array.isArray(e.to_email) ? e.to_email.join(', ') : e.to_email}` : ''}`, at: e.sent_date || e.created_at }))),
-        ...((docs.data || []).map((d: any) => ({ id: d.id, type: 'document' as const, title: `${d.document_type}: ${d.display_name}`, at: d.uploaded_at }))),
+        ...(activityRows.map((a: any) => ({ id: a.id, type: 'activity' as const, title: a.subject || 'Activity', detail: a.description, at: a.created_at }))),
+        ...(emailRows.map((e: any) => ({ id: e.id, type: 'email' as const, title: e.subject || 'Email', detail: `${e.email_type}${e.to_email ? ` → ${Array.isArray(e.to_email) ? e.to_email.join(', ') : e.to_email}` : ''}`, at: e.sent_date || e.created_at }))),
+        ...(documentRows.map((d: any) => ({ id: d.id, type: 'document' as const, title: `${d.document_type}: ${d.display_name}`, at: d.uploaded_at }))),
       ].sort((a,b) => +new Date(b.at) - +new Date(a.at));
 
       setTimeline(items);
-      const upcoming = (activities.data || []).map((a: any) => a.follow_up_date).filter(Boolean).sort()[0] || null;
+      const upcoming = activityRows.map((a: any) => a.follow_up_date).filter(Boolean).sort()[0] || null;
       setNextFollowUp(upcoming);
     };
     run();
