@@ -52,6 +52,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [expandedPastIds, setExpandedPastIds] = useState<Record<string, boolean>>({});
   const [formData, setFormData] = useState({
     activity_type: 'meeting',
     subject: '',
@@ -271,6 +272,10 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
     }
   };
 
+  const togglePastDetails = (id: string) => {
+    setExpandedPastIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
   const getAppointmentIcon = (type: string) => {
     switch (type) {
       case 'meeting':
@@ -370,7 +375,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
         >
           <Plus className="w-4 h-4" />
-          Schedule Appointment
+          Create Appointment
         </button>
       </div>
 
@@ -630,10 +635,87 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-medium text-gray-700">{appointment.subject}</h4>
-                        <p className="text-sm text-gray-500 mt-1">
-                          {formatAppointmentType(appointment.activity_type)} • {formatDate(appointment.follow_up_date)}
-                        </p>
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <h4 className="font-medium text-gray-700">{appointment.subject}</h4>
+                            {appointment.crm_contacts && (
+                              <p className="text-sm font-medium text-blue-600 mt-1">
+                                {appointment.crm_contacts.company_name}
+                              </p>
+                            )}
+                            <p className="text-sm text-gray-500 mt-1">
+                              {formatAppointmentType(appointment.activity_type)} • {formatDate(appointment.follow_up_date)}
+                            </p>
+                            {appointment.is_completed && appointment.completed_at && (
+                              <p className="text-xs text-green-700 mt-1">
+                                Completed: {new Date(appointment.completed_at).toLocaleString()}
+                              </p>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => togglePastDetails(appointment.id)}
+                            className="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-white transition"
+                          >
+                            {expandedPastIds[appointment.id] ? 'Hide details' : 'View details'}
+                          </button>
+                        </div>
+
+                        {expandedPastIds[appointment.id] && (
+                          <div className="mt-3 border-t border-gray-200 pt-3 space-y-3">
+                            {appointment.description ? (
+                              <div>
+                                <p className="text-xs uppercase tracking-wide text-gray-500">Transcript / Notes</p>
+                                <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{appointment.description}</p>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-500">No notes logged for this appointment yet.</p>
+                            )}
+
+                            {appointment.participants && appointment.participants.length > 0 && (
+                              <div>
+                                <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Participants</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {appointment.participants.map(participantId => {
+                                    const user = users.find(u => u.id === participantId);
+                                    return user ? (
+                                      <span key={participantId} className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                                        {user.full_name}
+                                      </span>
+                                    ) : null;
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => handleEdit(appointment)}
+                                className="text-xs px-3 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 transition"
+                              >
+                                Add / Edit Notes
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingAppointment(null);
+                                  setFormData({
+                                    activity_type: appointment.activity_type,
+                                    subject: `Follow-up: ${appointment.subject}`,
+                                    description: '',
+                                    follow_up_date: '',
+                                    location: '',
+                                    customer_id: appointment.customer_id || customerId || '',
+                                    participants: appointment.participants || [],
+                                    auto_create_followup_task: true,
+                                  });
+                                  setShowForm(true);
+                                }}
+                                className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                              >
+                                Create Follow-up Call
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
