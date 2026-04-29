@@ -19,7 +19,6 @@ import { ArchiveView } from '../components/crm/ArchiveView';
 import { DeliveryLog } from '../components/crm/DeliveryLog';
 import { ProductDocumentsPanel } from '../components/crm/ProductDocumentsPanel';
 import { Inquiry360View } from '../components/crm/Inquiry360View';
-import { EmailQueuePanel } from '../components/crm/EmailQueuePanel';
 import { CompactInquiryForm } from '../components/crm/CompactInquiryForm';
 import { CustomerSelectionDialog } from '../components/crm/CustomerSelectionDialog';
 import { CustomerConfirmationDialog } from '../components/crm/CustomerConfirmationDialog';
@@ -85,7 +84,7 @@ export function CRM() {
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'inquiry-360' | 'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'archive' | 'sales-team' | 'delivery-log' | 'documents' | 'email-queue'>('inquiry-360');
+  const [activeTab, setActiveTab] = useState<'inquiry-360' | 'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'archive' | 'sales-team' | 'delivery-log' | 'documents'>('inquiry-360');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingInquiry, setEditingInquiry] = useState<Inquiry | null>(null);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -554,17 +553,6 @@ export function CRM() {
                 {t('crm.salesTeam')}
               </button>
               <button
-                onClick={() => setActiveTab('email-queue')}
-                className={`flex items-center gap-2 px-6 py-4 border-b-2 transition whitespace-nowrap ${
-                  activeTab === 'email-queue'
-                    ? 'border-cyan-500 text-cyan-600 font-medium'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                <Send className="w-5 h-5" />
-                Email Queue
-              </button>
-              <button
                 onClick={() => setActiveTab('delivery-log')}
                 className={`flex items-center gap-2 px-6 py-4 border-b-2 transition whitespace-nowrap ${
                   activeTab === 'delivery-log'
@@ -656,9 +644,6 @@ export function CRM() {
               <SalesTeam embedded />
             )}
 
-            {activeTab === 'email-queue' && (
-              <EmailQueuePanel />
-            )}
 
             {activeTab === 'delivery-log' && (
               <DeliveryLog />
