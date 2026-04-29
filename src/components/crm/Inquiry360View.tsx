@@ -2,7 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 
-type Inquiry = { id: string; inquiry_number: string; company_name: string; product_name: string; status: string; inquiry_date: string; assigned_to?: string | null };
+type Inquiry = {
+  id: string;
+  inquiry_number: string;
+  company_name: string;
+  product_name: string;
+  status: string;
+  inquiry_date: string;
+  supplier_name?: string | null;
+  offered_price?: number | null;
+  offered_price_currency?: string | null;
+  assigned_to?: string | null;
+};
 
 type TimelineItem = { id: string; type: 'activity'|'email'|'document'; title: string; detail?: string | null; at: string; };
 type MinimalRow = Record<string, unknown> & { id: string };
@@ -27,10 +38,19 @@ const logSupabaseError = (scope: string, error: { code?: string; message?: strin
 
 export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focusedCompany, setFocusedCompany] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [nextFollowUp, setNextFollowUp] = useState<string | null>(null);
 
   const selected = useMemo(() => inquiries.find(i => i.id === selectedId) || inquiries[0], [inquiries, selectedId]);
+  const selectedCompany = focusedCompany || selected?.company_name || null;
+
+  const customerSummaryRows = useMemo(
+    () => inquiries
+      .filter((inquiry) => (selectedCompany ? inquiry.company_name === selectedCompany : true))
+      .sort((a, b) => +new Date(b.inquiry_date) - +new Date(a.inquiry_date)),
+    [inquiries, selectedCompany],
+  );
 
   useEffect(() => { if (inquiries.length && !selectedId) setSelectedId(inquiries[0].id); }, [inquiries, selectedId]);
 
@@ -72,7 +92,17 @@ export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
       <div className="space-y-2">
         {inquiries.map(i => <button key={i.id} onClick={() => setSelectedId(i.id)} className={`w-full text-left p-2 rounded border ${selected?.id===i.id ? 'border-blue-500 bg-blue-50':'border-gray-200'}`}>
           <div className="text-xs text-gray-500">#{i.inquiry_number}</div>
-          <div className="font-medium text-sm">{i.company_name}</div>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setFocusedCompany(i.company_name);
+              setSelectedId(i.id);
+            }}
+            className="font-medium text-sm text-left hover:text-blue-700 hover:underline"
+          >
+            {i.company_name}
+          </button>
           <div className="text-xs text-gray-600">{i.product_name}</div>
         </button>)}
       </div>
@@ -86,12 +116,58 @@ export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
             <p className="text-sm text-gray-600">{selected.company_name} • {selected.product_name}</p>
             <p className="text-xs text-gray-500 mt-1">Stage: {selected.status}</p>
             <p className="text-xs text-gray-500">Owner: {selected.assigned_to || 'Unassigned'}</p>
+            <button
+              type="button"
+              onClick={() => setFocusedCompany(selected.company_name)}
+              className="mt-1 text-xs text-blue-700 hover:underline"
+            >
+              View all inquiries for {selected.company_name}
+            </button>
           </div>
           <div className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 ${overdue ? 'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>
             {overdue ? <AlertTriangle className="w-3 h-3"/> : <Clock className="w-3 h-3"/>}
             {nextFollowUp ? `Next follow-up: ${new Date(nextFollowUp).toLocaleString()}` : 'No follow-up scheduled'}
           </div>
         </div>
+        <div className="mt-4 border-t pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-medium">Customer inquiry summary</h4>
+            {focusedCompany && (
+              <button type="button" onClick={() => setFocusedCompany(null)} className="text-xs text-gray-500 hover:text-gray-700 hover:underline">
+                Show all customers
+              </button>
+            )}
+          </div>
+          <div className="overflow-auto border rounded-lg">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Date</th>
+                  <th className="px-3 py-2 text-left font-medium">Product</th>
+                  <th className="px-3 py-2 text-left font-medium">Supplier</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                  <th className="px-3 py-2 text-left font-medium">Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customerSummaryRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-4 text-center text-gray-500">No inquiries found.</td>
+                  </tr>
+                ) : customerSummaryRows.map((row) => (
+                  <tr key={row.id} className={`border-t ${row.id === selected.id ? 'bg-blue-50' : 'bg-white'}`}>
+                    <td className="px-3 py-2 whitespace-nowrap">{row.inquiry_date ? new Date(row.inquiry_date).toLocaleDateString() : '-'}</td>
+                    <td className="px-3 py-2">{row.product_name || '-'}</td>
+                    <td className="px-3 py-2">{row.supplier_name || '-'}</td>
+                    <td className="px-3 py-2 capitalize">{row.status || '-'}</td>
+                    <td className="px-3 py-2">{row.offered_price != null ? `${row.offered_price_currency || ''} ${row.offered_price}`.trim() : 'Pending'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <div className="mt-4 border-t pt-3">
           <h4 className="font-medium mb-2">Unified Timeline (Activity + Email + Documents)</h4>
           <div className="space-y-2">
