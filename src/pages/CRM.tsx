@@ -245,10 +245,6 @@ export function CRM() {
           return;
         }
 
-        if (!formData.customer_id) {
-          alert(t('validation.customerSelectionRequired'));
-          return;
-        }
       }
 
       if (editingInquiry) {
@@ -719,8 +715,12 @@ export function CRM() {
           searchTerm={pendingFormData?.company_name || ''}
           onSelect={handleCustomerSelect}
           onCreateNew={() => {
-            setShowCustomerSelectionDialog(false);
-            setShowCustomerConfirmationDialog(true);
+            // Keep CRM prospecting flexible: allow inquiry creation without linking to master customers
+            if (pendingFormData) {
+              pendingFormData.customer_id = null;
+              setShowCustomerSelectionDialog(false);
+              handleFormSubmit(pendingFormData);
+            }
           }}
           onCancel={() => {
             setShowCustomerSelectionDialog(false);
@@ -740,8 +740,14 @@ export function CRM() {
           }}
           onConfirm={handleCreateNewCustomer}
           onCancel={() => {
-            setShowCustomerConfirmationDialog(false);
-            setPendingFormData(null);
+            // Continue as CRM prospect without creating a sales customer record
+            if (pendingFormData) {
+              pendingFormData.customer_id = null;
+              setShowCustomerConfirmationDialog(false);
+              handleFormSubmit(pendingFormData);
+            } else {
+              setShowCustomerConfirmationDialog(false);
+            }
           }}
         />
 

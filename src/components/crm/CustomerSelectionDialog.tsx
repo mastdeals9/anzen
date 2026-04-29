@@ -173,10 +173,10 @@ export function CustomerSelectionDialog({
           >
             <div className="flex items-center text-blue-600">
               <Users className="h-5 w-5 mr-2" />
-              <span className="font-medium">None of these - Create New Customer</span>
+              <span className="font-medium">None of these - Continue as Prospect (No Link)</span>
             </div>
             <p className="text-xs text-gray-500 ml-7 mt-1">
-              Create a new customer record for "{searchTerm}"
+              Save inquiry with this company name only and link later when needed
             </p>
           </button>
         </div>
