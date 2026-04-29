@@ -5,6 +5,7 @@ import {
   AlertTriangle, Paperclip, RefreshCw
 } from 'lucide-react';
 import { applyEmailTemplateVariables } from '../../utils/crmEmailPersonalization';
+import { openGmailReconnectPopup } from './gmailReconnect';
 
 interface Campaign {
   id: string;
@@ -50,6 +51,7 @@ export function DeliveryLog() {
   const [retryingRecipients, setRetryingRecipients] = useState<Record<string, boolean>>({});
   const [retryingCampaigns, setRetryingCampaigns] = useState<Record<string, boolean>>({});
   const [retryResult, setRetryResult] = useState<Record<string, { type: 'success' | 'error'; message: string }>>({});
+  const [queueStats, setQueueStats] = useState({ pending: 0, sent: 0, failed: 0 });
 
   useEffect(() => {
     loadCampaigns();
@@ -63,6 +65,19 @@ export function DeliveryLog() {
       .order('started_at', { ascending: false })
       .limit(100);
     setCampaigns(data || []);
+
+    const { data: recipientsSummary } = await supabase
+      .from('bulk_email_recipients')
+      .select('status')
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    const rows = recipientsSummary || [];
+    setQueueStats({
+      pending: rows.filter(r => r.status === 'pending').length,
+      sent: rows.filter(r => r.status === 'sent').length,
+      failed: rows.filter(r => r.status === 'failed').length,
+    });
     setLoading(false);
   };
 
@@ -276,11 +291,24 @@ export function DeliveryLog() {
         },
       }));
     } catch (err: any) {
+      const errMsg = err?.message || 'Failed to retry recipients.';
+      const needsReauth = errMsg.includes('TOKEN_REAUTH_REQUIRED')
+        || errMsg.includes('Failed to refresh access token')
+        || errMsg.includes('invalid_grant')
+        || errMsg.includes('GMAIL_TOKEN_INVALID');
+
+      if (needsReauth) {
+        const shouldReconnect = window.confirm('Your Gmail login has expired. Reconnect Gmail now?');
+        if (shouldReconnect) {
+          openGmailReconnectPopup();
+        }
+      }
+
       setRetryResult(prev => ({
         ...prev,
         [campaignId]: {
           type: 'error',
-          message: err?.message || 'Failed to retry recipients.',
+          message: errMsg,
         },
       }));
     } finally {
@@ -324,6 +352,21 @@ export function DeliveryLog() {
           >
             <RefreshCw className="w-4 h-4" />
           </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-amber-50 border border-amber-100 rounded-lg p-3">
+          <p className="text-xs text-amber-700">Pending Queue</p>
+          <p className="text-lg font-semibold text-amber-800">{queueStats.pending}</p>
+        </div>
+        <div className="bg-green-50 border border-green-100 rounded-lg p-3">
+          <p className="text-xs text-green-700">Sent</p>
+          <p className="text-lg font-semibold text-green-800">{queueStats.sent}</p>
+        </div>
+        <div className="bg-red-50 border border-red-100 rounded-lg p-3">
+          <p className="text-xs text-red-700">Failed</p>
+          <p className="text-lg font-semibold text-red-800">{queueStats.failed}</p>
         </div>
       </div>
 
