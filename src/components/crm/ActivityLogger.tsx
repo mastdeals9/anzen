@@ -191,6 +191,9 @@ export function ActivityLogger({ inquiryId: _inquiryId, customerId, leadId, onAc
   };
 
   const visibleActivities = activities.slice(0, visibleCount);
+  const completedActivities = activities.filter((activity) => activity.is_completed).length;
+  const pendingActivities = activities.length - completedActivities;
+  const followUpActivities = activities.filter((activity) => activity.follow_up_date && !activity.is_completed).length;
 
   if (loading) {
     return <div className="flex justify-center py-8 text-gray-500 text-sm">Loading...</div>;
@@ -326,6 +329,21 @@ export function ActivityLogger({ inquiryId: _inquiryId, customerId, leadId, onAc
         </div>
       )}
 
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-blue-700">Total</p>
+          <p className="mt-1 text-2xl font-semibold text-blue-900">{activities.length}</p>
+        </div>
+        <div className="rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">Completed</p>
+          <p className="mt-1 text-2xl font-semibold text-emerald-900">{completedActivities}</p>
+        </div>
+        <div className="rounded-xl border border-orange-100 bg-gradient-to-br from-orange-50 to-white p-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-orange-700">Need Follow-up</p>
+          <p className="mt-1 text-2xl font-semibold text-orange-900">{followUpActivities || pendingActivities}</p>
+        </div>
+      </div>
+
       <div className="space-y-2">
         {activities.length === 0 ? (
           <div className="text-center py-8 text-gray-500 text-sm">
@@ -336,8 +354,10 @@ export function ActivityLogger({ inquiryId: _inquiryId, customerId, leadId, onAc
             {visibleActivities.map((activity) => (
               <div
                 key={activity.id}
-                className={`border rounded-lg p-3 ${
-                  activity.is_completed ? 'bg-gray-50 border-gray-200' : 'bg-white border-gray-200'
+                className={`border rounded-xl p-3 shadow-sm transition ${
+                  activity.is_completed
+                    ? 'bg-gray-50 border-gray-200'
+                    : 'bg-white border-gray-200 hover:border-blue-200 hover:shadow-md'
                 }`}
               >
                 <div className="flex items-start gap-3">
