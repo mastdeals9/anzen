@@ -21,6 +21,7 @@ interface Product {
   description: string;
   min_stock_level: number | null;
   duty_a1: string | null;
+  duty_percent?: number | null;
   current_stock?: number;
   is_active: boolean;
 }
@@ -378,6 +379,7 @@ export function Products() {
         description: formData.description,
         min_stock_level: minStock,
         duty_a1: formData.duty_a1 || null,
+        duty_percent: formData.duty_a1 === '' ? 0 : (parseFloat(formData.duty_a1) || 0),
       };
 
       let productId: string;
