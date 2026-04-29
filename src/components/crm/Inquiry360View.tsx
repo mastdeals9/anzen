@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 
 type Inquiry = { id: string; inquiry_number: string; company_name: string; product_name: string; status: string; inquiry_date: string; assigned_to?: string | null };
 
-type TimelineItem = { id: string; type: 'activity'|'email'|'document'; title: string; detail?: string | null; at: string };
+type TimelineItem = { id: string; type: 'activity'|'email'|'document'; title: string; detail?: string | null; at: string; };
 
 export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -58,6 +58,7 @@ export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
             <h3 className="text-lg font-semibold">Inquiry 360 • #{selected.inquiry_number}</h3>
             <p className="text-sm text-gray-600">{selected.company_name} • {selected.product_name}</p>
             <p className="text-xs text-gray-500 mt-1">Stage: {selected.status}</p>
+            <p className="text-xs text-gray-500">Owner: {selected.assigned_to || 'Unassigned'}</p>
           </div>
           <div className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 ${overdue ? 'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>
             {overdue ? <AlertTriangle className="w-3 h-3"/> : <Clock className="w-3 h-3"/>}
@@ -65,11 +66,11 @@ export function Inquiry360View({ inquiries }: { inquiries: Inquiry[] }) {
           </div>
         </div>
         <div className="mt-4 border-t pt-3">
-          <h4 className="font-medium mb-2">Unified Timeline</h4>
+          <h4 className="font-medium mb-2">Unified Timeline (Activity + Email + Documents)</h4>
           <div className="space-y-2">
             {timeline.length === 0 ? <div className="text-sm text-gray-500">No activities, emails, or documents yet.</div> : timeline.map(item => <div key={`${item.type}-${item.id}`} className="border rounded-lg p-2">
               <div className="flex items-center justify-between text-xs text-gray-500">
-                <span className="uppercase">{item.type}</span><span>{new Date(item.at).toLocaleString()}</span>
+                <span className={`uppercase px-2 py-0.5 rounded ${item.type==='activity'?'bg-indigo-100 text-indigo-700':item.type==='email'?'bg-cyan-100 text-cyan-700':'bg-emerald-100 text-emerald-700'}`}>{item.type}</span><span>{new Date(item.at).toLocaleString()}</span>
               </div>
               <div className="font-medium text-sm">{item.title}</div>
               {item.detail && <div className="text-xs text-gray-600">{item.detail}</div>}
