@@ -622,8 +622,8 @@ export function CRM() {
                 <div className='bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-blue-800'>
                   Calendar is now the single place for appointment planning. The Appointment tab was merged here to avoid duplication.
                 </div>
-                <ReminderCalendar onReminderCreated={loadInquiries} />
                 <AppointmentScheduler onAppointmentCreated={loadInquiries} />
+                <ReminderCalendar onReminderCreated={loadInquiries} />
               </div>
             )}
 
