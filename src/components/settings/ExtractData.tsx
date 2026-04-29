@@ -83,9 +83,12 @@ export function ExtractData() {
     setNewlyAddedIds(new Set());
     setFilterNew(false);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const [{ data: { user } }, { data: { session } }] = await Promise.all([
+        supabase.auth.getUser(),
+        supabase.auth.getSession(),
+      ]);
 
-      if (!user) {
+      if (!user || !session) {
         alert('Please log in to extract contacts.');
         return;
       }
@@ -112,7 +115,7 @@ export function ExtractData() {
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
