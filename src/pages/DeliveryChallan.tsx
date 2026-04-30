@@ -29,6 +29,11 @@ interface DeliveryChallan {
   total_items?: number;
   invoiced_items?: number;
   linked_invoices?: string[];
+  sales_orders?: {
+    so_number: string;
+    order_date: string;
+  } | null;
+  fly_days?: number | null;
   customers?: {
     company_name: string;
     address: string;
@@ -200,7 +205,7 @@ export function DeliveryChallan() {
     try {
       const { data, error } = await supabase
         .from('delivery_challans')
-        .select('*, customers(company_name, address, city, phone, pbf_license)')
+        .select('*, customers(company_name, address, city, phone, pbf_license), sales_orders(so_number, order_date)')
         .gte('challan_date', dateRange.startDate)
         .lte('challan_date', dateRange.endDate)
         .order('challan_date', { ascending: false });
@@ -229,12 +234,16 @@ export function DeliveryChallan() {
 
       const challansWithStatus = (data || []).map(challan => {
         const invStatus = invStatusMap.get(challan.id);
+        const flyDays = challan.sales_orders?.order_date
+          ? Math.ceil((new Date(challan.challan_date).getTime() - new Date(challan.sales_orders.order_date).getTime()) / (1000 * 60 * 60 * 24))
+          : null;
         return {
           ...challan,
           invoicing_status: invStatus?.status || 'not_invoiced',
           total_items: invStatus?.total_items || 0,
           invoiced_items: invStatus?.fully_invoiced_items + invStatus?.partially_invoiced_items || 0,
-          linked_invoices: invStatus?.linked_invoices || []
+          linked_invoices: invStatus?.linked_invoices || [],
+          fly_days: flyDays
         };
       });
 
@@ -244,6 +253,13 @@ export function DeliveryChallan() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const openChallanPreview = async (challan: DeliveryChallan) => {
+    const items = await loadChallanItems(challan.id);
+    setSelectedChallan(challan);
+    setChallanItems(items);
+    setViewModalOpen(true);
   };
 
   const generateNextChallanNumber = async () => {
@@ -1036,6 +1052,29 @@ export function DeliveryChallan() {
       }
     },
     {
+      key: 'fly_days',
+      label: 'Fly Days',
+      render: (_value: any, challan: DeliveryChallan) => (
+        <div className="space-y-1">
+          <div className="text-xs font-medium text-gray-700">
+            {challan.fly_days === null || challan.fly_days === undefined ? '—' : `${challan.fly_days} day(s)`}
+          </div>
+          {challan.sales_orders?.so_number && (
+            <div className="text-xs">
+              <span className="inline-block px-2 py-0.5 rounded bg-blue-50 text-blue-700">SO: {challan.sales_orders.so_number}</span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => openChallanPreview(challan)}
+            className="text-xs px-2 py-0.5 rounded bg-orange-50 text-orange-700 hover:underline"
+          >
+            DC: {challan.challan_number}
+          </button>
+        </div>
+      )
+    },
+    {
       key: 'invoicing_status',
       label: 'Invoicing Status',
       render: (value: any, challan: DeliveryChallan) => {
@@ -1150,10 +1189,7 @@ export function DeliveryChallan() {
             <div className="flex items-center gap-2">
               <button
                 onClick={async () => {
-                  const items = await loadChallanItems(challan.id);
-                  setSelectedChallan(challan);
-                  setChallanItems(items);
-                  setViewModalOpen(true);
+                  await openChallanPreview(challan);
                 }}
                 className="p-1 text-blue-600 hover:bg-blue-50 rounded"
                 title="View Challan"
