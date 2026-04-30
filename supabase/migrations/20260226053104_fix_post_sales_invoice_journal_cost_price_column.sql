@@ -18,6 +18,7 @@ SECURITY DEFINER
 SET search_path TO 'public'
 AS $function$
 DECLARE
+v_existing_je_id UUID;
 v_je_id UUID;
 v_je_number TEXT;
 v_ar_account_id UUID;
@@ -29,10 +30,24 @@ v_item RECORD;
 v_line_num INTEGER := 1;
 v_total_cost NUMERIC := 0;
 v_item_cost NUMERIC;
+v_total_debit NUMERIC := 0;
+v_total_credit NUMERIC := 0;
 BEGIN
 -- STRICT IDEMPOTENCY: If JE already exists, NEVER create another one
 IF NEW.journal_entry_id IS NOT NULL THEN
 RETURN NEW;
+END IF;
+
+-- Idempotency guard on source_module + reference_id
+SELECT id INTO v_existing_je_id
+FROM journal_entries
+WHERE source_module = 'sales_invoice'
+  AND reference_id = NEW.id
+LIMIT 1;
+
+IF v_existing_je_id IS NOT NULL THEN
+  NEW.journal_entry_id := v_existing_je_id;
+  RETURN NEW;
 END IF;
 
 -- Only post when invoice reaches a billable payment_status (FIXED: was NEW.status)
@@ -101,7 +116,19 @@ VALUES (v_je_id, v_line_num, v_inventory_account_id, 'Inventory - ' || NEW.invoi
 END IF;
 END IF;
 
+v_total_debit := COALESCE(NEW.total_amount, 0) + COALESCE(v_total_cost, 0);
+v_total_credit := COALESCE(NEW.subtotal, 0) + COALESCE(NEW.tax_amount, 0) + COALESCE(v_total_cost, 0);
+
+IF v_total_debit <> v_total_credit THEN
+  RAISE EXCEPTION 'Journal not balanced';
+END IF;
+
 NEW.journal_entry_id := v_je_id;
 RETURN NEW;
+
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE LOG 'post_sales_invoice_journal failed for invoice %: %', NEW.id, SQLERRM;
+    RAISE;
 END;
 $function$;
