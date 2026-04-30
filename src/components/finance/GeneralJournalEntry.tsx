@@ -286,8 +286,20 @@ export function GeneralJournalEntry({ canManage, onNavigateToLedger, initialEdit
     setTemplateOpen(false);
   };
 
+  const validateBeforePost = (): string | null => {
+    if (!hasAccounts) return 'Please select an account for each journal line with an amount';
+    if (totalDebit <= 0 && totalCredit <= 0) return 'Please enter at least one debit/credit amount';
+    if (!isBalanced) return `Journal is unbalanced. Debit ${formatCurrency(totalDebit)} must equal Credit ${formatCurrency(totalCredit)}`;
+    return null;
+  };
+
   const handlePost = async () => {
-    if (!isBalanced || !hasAccounts) return;
+    const validationError = validateBeforePost();
+    if (validationError) {
+      showToast({ type: 'error', title: 'Validation Failed', message: validationError });
+      return;
+    }
+
     setSaving(true);
 
     try {
