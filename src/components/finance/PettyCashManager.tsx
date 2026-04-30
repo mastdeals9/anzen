@@ -255,7 +255,7 @@ const expenseCategories = [
     icon: Building2,
     description: 'Electricity, water, etc - EXPENSED to P&L',
     requiresContainer: false,
-    group: 'Operations'
+    group: 'Operations',
   },
   {
     value: 'bank_charges',
@@ -264,7 +264,7 @@ const expenseCategories = [
     icon: DollarSign,
     description: 'Bank fees, charges, and transaction costs - EXPENSED to P&L',
     requiresContainer: false,
-    group: 'Operations'
+    group: 'Operations',
   },
   {
     value: 'office_admin',
