@@ -282,118 +282,23 @@ export function FundTransferManager({ canManage }: FundTransferManagerProps) {
 
         showToast({ type: 'success', title: 'Success', message: 'Fund transfer updated successfully!' });
       } else {
-        // CREATE new transfer
-        // Generate transfer number
-        const { data: transferNumber, error: numberError } = await supabase
-          .rpc('generate_fund_transfer_number');
-
-        if (numberError) throw numberError;
-
-        const transferData: any = {
-          transfer_number: transferNumber,
-          transfer_date: formData.transfer_date,
-          amount: formData.from_amount,  // For backwards compatibility
-          from_amount: formData.from_amount,
-          to_amount: formData.to_amount,
-          exchange_rate: exchangeRate,
-          from_account_type: formData.from_account_type,
-          to_account_type: formData.to_account_type,
-          description: formData.description || null,
-          created_by: user.id,
-        };
-
-        if (formData.from_account_type === 'bank') {
-          transferData.from_bank_account_id = formData.from_bank_account_id;
-        }
-
-        if (formData.to_account_type === 'bank') {
-          transferData.to_bank_account_id = formData.to_bank_account_id;
-        }
-
-        if (formData.from_bank_statement_line_id) {
-          transferData.from_bank_statement_line_id = formData.from_bank_statement_line_id;
-        }
-
-        if (formData.to_bank_statement_line_id) {
-          transferData.to_bank_statement_line_id = formData.to_bank_statement_line_id;
-        }
-
-        const { data: newTransfer, error } = await supabase
-          .from('fund_transfers')
-          .insert([transferData])
-          .select()
-          .single();
+        // CREATE new transfer + optional petty cash posting atomically in DB
+        const { error } = await supabase.rpc('create_fund_transfer_with_posting', {
+          p_transfer_date: formData.transfer_date,
+          p_from_amount: formData.from_amount,
+          p_to_amount: formData.to_amount,
+          p_from_account_type: formData.from_account_type,
+          p_to_account_type: formData.to_account_type,
+          p_description: formData.description || null,
+          p_from_bank_account_id: formData.from_account_type === 'bank' ? formData.from_bank_account_id : null,
+          p_to_bank_account_id: formData.to_account_type === 'bank' ? formData.to_bank_account_id : null,
+          p_from_bank_statement_line_id: formData.from_bank_statement_line_id || null,
+          p_to_bank_statement_line_id: formData.to_bank_statement_line_id || null,
+          p_exchange_rate: exchangeRate,
+          p_created_by: user.id,
+        });
 
         if (error) throw error;
-
-        // If destination is petty_cash, create corresponding petty_cash_transaction
-        if (formData.to_account_type === 'petty_cash' && newTransfer) {
-          // Generate petty cash transaction number
-          const prefix = 'PCW';
-          const year = new Date().getFullYear().toString().slice(-2);
-          const month = (new Date().getMonth() + 1).toString().padStart(2, '0');
-          const { count } = await supabase
-            .from('petty_cash_transactions')
-            .select('*', { count: 'exact', head: true })
-            .like('transaction_number', `${prefix}${year}${month}%`);
-          
-          const pettyCashTxNumber = `${prefix}${year}${month}-${String((count || 0) + 1).padStart(4, '0')}`;
-
-          // Get source bank account name for description
-          let sourceAccountName = 'Bank';
-          if (formData.from_account_type === 'bank' && formData.from_bank_account_id) {
-            const sourceBank = bankAccounts.find(b => b.id === formData.from_bank_account_id);
-            sourceAccountName = sourceBank?.alias || sourceBank?.bank_name || 'Bank';
-          }
-
-          const { error: pettyCashError } = await supabase
-            .from('petty_cash_transactions')
-            .insert([{
-              transaction_number: pettyCashTxNumber,
-              transaction_date: formData.transfer_date,
-              transaction_type: 'withdraw',
-              amount: formData.to_amount,
-              description: formData.description || `Fund transfer from ${sourceAccountName}`,
-              bank_account_id: formData.from_account_type === 'bank' ? formData.from_bank_account_id : null,
-              source: `Fund Transfer ${transferNumber}`,
-              fund_transfer_id: newTransfer.id,
-              created_by: user.id,
-            }]);
-
-          if (pettyCashError) {
-            console.error('Error creating petty cash transaction:', pettyCashError);
-            showToast({ type: 'warning', title: 'Warning', message: 'Fund transfer created but petty cash entry failed: ' + pettyCashError.message });
-          } else {
-            console.log('Petty cash transaction created successfully:', pettyCashTxNumber);
-          }
-        }
-
-        // Update bank statement lines to mark them as matched
-        if (formData.from_bank_statement_line_id && newTransfer) {
-          await supabase
-            .from('bank_statement_lines')
-            .update({
-              matched_fund_transfer_id: newTransfer.id,
-              reconciliation_status: 'matched',
-              matched_at: new Date().toISOString(),
-              matched_by: user.id,
-              notes: `Linked to Fund Transfer ${transferNumber}`
-            })
-            .eq('id', formData.from_bank_statement_line_id);
-        }
-
-        if (formData.to_bank_statement_line_id && newTransfer) {
-          await supabase
-            .from('bank_statement_lines')
-            .update({
-              matched_fund_transfer_id: newTransfer.id,
-              reconciliation_status: 'matched',
-              matched_at: new Date().toISOString(),
-              matched_by: user.id,
-              notes: `Linked to Fund Transfer ${transferNumber}`
-            })
-            .eq('id', formData.to_bank_statement_line_id);
-        }
 
         showToast({ type: 'success', title: 'Success', message: 'Fund transfer created and posted successfully!' });
       }
