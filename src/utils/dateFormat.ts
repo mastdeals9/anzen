@@ -15,26 +15,18 @@ export const formatDate = (
 ): string => {
   if (!date) return '';
 
-  try {
-    const dateObj = typeof date === 'string' ? new Date(date) : date;
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  if (Number.isNaN(dateObj.getTime())) return '';
 
-    if (isNaN(dateObj.getTime())) return '';
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const year = dateObj.getFullYear();
 
-    const day = String(dateObj.getDate()).padStart(2, '0');
-    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const year = dateObj.getFullYear();
+  if (!includeTime) return `${day}/${month}/${year}`;
 
-    if (includeTime) {
-      const hours = String(dateObj.getHours()).padStart(2, '0');
-      const minutes = String(dateObj.getMinutes()).padStart(2, '0');
-      return `${day}/${month}/${year} ${hours}:${minutes}`;
-    }
-
-    return `${day}/${month}/${year}`;
-  } catch (error) {
-    console.error('Error formatting date:', error);
-    return '';
-  }
+  const hours = String(dateObj.getHours()).padStart(2, '0');
+  const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${minutes}`;
 };
 
 /**
@@ -96,24 +88,20 @@ export const formatDateTime = (datetime: string | Date | null | undefined): stri
 export const toInputFormat = (dateStr: string | null | undefined): string => {
   if (!dateStr) return '';
 
-  try {
-    // If already in YYYY-MM-DD format, return as is
-    if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
-      return dateStr.split('T')[0];
-    }
-
-    // Parse DD/MM/YYYY format
-    const parts = dateStr.split('/');
-    if (parts.length === 3) {
-      const [day, month, year] = parts;
-      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-    }
-
-    return '';
-  } catch (error) {
-    console.error('Error converting date format:', error);
-    return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+    return dateStr.split('T')[0];
   }
+
+  const match = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return '';
+
+  const [, day, month, year] = match;
+  const dayNum = Number(day);
+  const monthNum = Number(month);
+
+  if (dayNum < 1 || dayNum > 31 || monthNum < 1 || monthNum > 12) return '';
+
+  return `${year}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
 };
 
 /**
@@ -135,15 +123,33 @@ export const getTodayInputFormat = (): string => {
 export const formatTableDate = formatDate;
 
 /**
- * Returns financial year string "YY-YY" for a given date.
- * FY starts April 1. Examples:
- * Financial year follows the calendar year (Jan – Dec).
- *   Any date in 2025 → "25"
- *   Any date in 2026 → "26"
+ * Returns financial year string in "YY-YY" format for a given local date.
+ *
+ * Default behavior is Indonesia style (Jan-Dec) with `fyStartMonth = 1`.
+ * Use `fyStartMonth` to switch fiscal boundary if needed (for example, 4 for Apr-Mar).
+ *
+ * Logic:
+ * - If date month >= fyStartMonth, FY starts in the same year.
+ * - Otherwise, FY starts in the previous year.
+ *
+ * Examples:
+ * - getFinancialYear(new Date('2026-05-10'), 1) => "26-26"
+ * - getFinancialYear(new Date('2026-05-10'), 4) => "26-27"
+ * - getFinancialYear(new Date('2026-02-10'), 4) => "25-26"
  */
-export const getFinancialYear = (date: Date | string): string => {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  return String(d.getFullYear()).slice(-2);
+export const getFinancialYear = (date: Date, fyStartMonth = 1): string => {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+
+  const normalizedStartMonth = Number.isInteger(fyStartMonth) && fyStartMonth >= 1 && fyStartMonth <= 12
+    ? fyStartMonth
+    : 1;
+
+  const month = date.getMonth() + 1;
+  const year = date.getFullYear();
+  const startYear = month >= normalizedStartMonth ? year : year - 1;
+  const endYear = normalizedStartMonth === 1 ? startYear : startYear + 1;
+
+  return `${String(startYear).slice(-2)}-${String(endYear).slice(-2)}`;
 };
 
 /**

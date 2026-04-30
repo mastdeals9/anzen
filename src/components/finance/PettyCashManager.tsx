@@ -376,7 +376,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
           .order('transaction_date', { ascending: false })
           .order('transaction_number', { ascending: false }),
 
-        supabase.rpc('get_petty_cash_balance'),
+        supabase.rpc('get_petty_cash_balance_by_date', { start_date: startDate, end_date: endDate }),
 
         supabase
           .from('import_containers')
@@ -854,13 +854,14 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
     const headers = ['Date', 'Number', 'Type', 'Category', 'Description', 'Amount', 'Paid To'];
     const rows = filteredTransactions.map(tx => {
       const category = tx.expense_category ? getCategoryInfo(tx.expense_category) : null;
+      const amountSign = tx.transaction_type === 'withdraw' ? '+' : '-';
       return [
         tx.transaction_date,
         tx.transaction_number,
         tx.transaction_type === 'withdraw' ? 'Withdrawal' : 'Expense',
         category?.label || '',
         tx.description,
-        tx.amount.toString(),
+        `${amountSign} Rp ${Number(tx.amount).toLocaleString('id-ID')}`,
         tx.paid_to || ''
       ];
     });
@@ -1178,7 +1179,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
                       <span className={`text-sm font-medium ${
                         tx.transaction_type === 'withdraw' ? 'text-blue-600' : 'text-red-600'
                       }`}>
-                        Rp {Number(tx.amount).toLocaleString()}
+                        {tx.transaction_type === 'withdraw' ? '+' : '-'} Rp {Number(tx.amount).toLocaleString('id-ID')}
                       </span>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-center">
@@ -1654,7 +1655,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
                 <div>
                   <p className="text-xs text-gray-500 mb-0.5">Amount</p>
                   <p className="text-lg font-bold text-gray-900">
-                    Rp {Number(viewingTransaction.amount).toLocaleString('id-ID')}
+                    {viewingTransaction.transaction_type === 'withdraw' ? '+' : '-'} Rp {Number(viewingTransaction.amount).toLocaleString('id-ID')}
                   </p>
                 </div>
               </div>

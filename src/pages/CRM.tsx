@@ -4,7 +4,7 @@ import { Modal } from '../components/Modal';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Mail, Calendar as CalendarIcon, LayoutGrid, Users, Table, Inbox, Activity, Clock, Archive, BarChart3, Send } from 'lucide-react';
+import { Plus, Mail, Calendar as CalendarIcon, LayoutGrid, Users, Table, Inbox, Activity, Clock, Archive, BarChart3, Send, FolderOpen, Orbit } from 'lucide-react';
 import { SalesTeam } from './SalesTeam';
 import { GmailBrowserInbox } from '../components/crm/GmailBrowserInbox';
 import { InquiryTableExcel } from '../components/crm/InquiryTableExcel';
@@ -17,6 +17,8 @@ import { ActivityLogger } from '../components/crm/ActivityLogger';
 import { AppointmentScheduler } from '../components/crm/AppointmentScheduler';
 import { ArchiveView } from '../components/crm/ArchiveView';
 import { DeliveryLog } from '../components/crm/DeliveryLog';
+import { ProductDocumentsPanel } from '../components/crm/ProductDocumentsPanel';
+import { Inquiry360View } from '../components/crm/Inquiry360View';
 import { CompactInquiryForm } from '../components/crm/CompactInquiryForm';
 import { CustomerSelectionDialog } from '../components/crm/CustomerSelectionDialog';
 import { CustomerConfirmationDialog } from '../components/crm/CustomerConfirmationDialog';
@@ -82,7 +84,7 @@ export function CRM() {
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'appointments' | 'archive' | 'sales-team' | 'delivery-log'>('table');
+  const [activeTab, setActiveTab] = useState<'inquiry-360' | 'table' | 'pipeline' | 'calendar' | 'email' | 'customers' | 'activities' | 'archive' | 'sales-team' | 'delivery-log' | 'documents'>('inquiry-360');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingInquiry, setEditingInquiry] = useState<Inquiry | null>(null);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -242,10 +244,6 @@ export function CRM() {
           return;
         }
 
-        if (!formData.customer_id) {
-          alert(t('validation.customerSelectionRequired'));
-          return;
-        }
       }
 
       if (editingInquiry) {
@@ -455,6 +453,17 @@ export function CRM() {
           <div className="border-b border-gray-200">
             <div className="flex overflow-x-auto">
               <button
+                onClick={() => setActiveTab('inquiry-360')}
+                className={`flex items-center gap-2 px-6 py-4 border-b-2 transition whitespace-nowrap ${
+                  activeTab === 'inquiry-360'
+                    ? 'border-purple-500 text-purple-600 font-medium'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Orbit className="w-5 h-5" />
+                Inquiry 360
+              </button>
+              <button
                 onClick={() => setActiveTab('email')}
                 className={`flex items-center gap-2 px-6 py-4 border-b-2 transition whitespace-nowrap ${
                   activeTab === 'email'
@@ -520,17 +529,7 @@ export function CRM() {
                 <Activity className="w-5 h-5" />
                 {t('crm.activities')}
               </button>
-              <button
-                onClick={() => setActiveTab('appointments')}
-                className={`flex items-center gap-2 px-6 py-4 border-b-2 transition whitespace-nowrap ${
-                  activeTab === 'appointments'
-                    ? 'border-blue-500 text-blue-600 font-medium'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                <Clock className="w-5 h-5" />
-                {t('crm.appointments')}
-              </button>
+              
               <button
                 onClick={() => setActiveTab('archive')}
                 className={`flex items-center gap-2 px-6 py-4 border-b-2 transition whitespace-nowrap ${
@@ -564,6 +563,17 @@ export function CRM() {
                 <Send className="w-5 h-5" />
                 Delivery Log
               </button>
+              <button
+                onClick={() => setActiveTab('documents')}
+                className={`flex items-center gap-2 px-6 py-4 border-b-2 transition whitespace-nowrap ${
+                  activeTab === 'documents'
+                    ? 'border-blue-500 text-blue-600 font-medium'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <FolderOpen className="w-5 h-5" />
+                Documents
+              </button>
             </div>
           </div>
 
@@ -580,6 +590,10 @@ export function CRM() {
               </div>
             )}
             
+            {activeTab === 'inquiry-360' && (
+              <Inquiry360View inquiries={inquiries as any} />
+            )}
+
             {activeTab === 'email' && (
               <GmailBrowserInbox />
             )}
@@ -604,7 +618,13 @@ export function CRM() {
             )}
 
             {activeTab === 'calendar' && (
-              <ReminderCalendar onReminderCreated={loadInquiries} />
+              <div className='space-y-4'>
+                <div className='bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-blue-800'>
+                  Calendar is now the single place for appointment planning. The Appointment tab was merged here to avoid duplication.
+                </div>
+                <ReminderCalendar onReminderCreated={loadInquiries} />
+                <AppointmentScheduler onAppointmentCreated={loadInquiries} />
+              </div>
             )}
 
             {activeTab === 'customers' && (
@@ -615,9 +635,6 @@ export function CRM() {
               <ActivityLogger onActivityLogged={loadInquiries} />
             )}
 
-            {activeTab === 'appointments' && (
-              <AppointmentScheduler onAppointmentCreated={loadInquiries} />
-            )}
 
             {activeTab === 'archive' && (
               <ArchiveView canManage={canManage} onRefresh={loadInquiries} />
@@ -627,8 +644,13 @@ export function CRM() {
               <SalesTeam embedded />
             )}
 
+
             {activeTab === 'delivery-log' && (
               <DeliveryLog />
+            )}
+
+            {activeTab === 'documents' && (
+              <ProductDocumentsPanel />
             )}
           </div>
         </div>
@@ -678,8 +700,12 @@ export function CRM() {
           searchTerm={pendingFormData?.company_name || ''}
           onSelect={handleCustomerSelect}
           onCreateNew={() => {
-            setShowCustomerSelectionDialog(false);
-            setShowCustomerConfirmationDialog(true);
+            // Keep CRM prospecting flexible: allow inquiry creation without linking to master customers
+            if (pendingFormData) {
+              pendingFormData.customer_id = null;
+              setShowCustomerSelectionDialog(false);
+              handleFormSubmit(pendingFormData);
+            }
           }}
           onCancel={() => {
             setShowCustomerSelectionDialog(false);
@@ -699,8 +725,14 @@ export function CRM() {
           }}
           onConfirm={handleCreateNewCustomer}
           onCancel={() => {
-            setShowCustomerConfirmationDialog(false);
-            setPendingFormData(null);
+            // Continue as CRM prospect without creating a sales customer record
+            if (pendingFormData) {
+              pendingFormData.customer_id = null;
+              setShowCustomerConfirmationDialog(false);
+              handleFormSubmit(pendingFormData);
+            } else {
+              setShowCustomerConfirmationDialog(false);
+            }
           }}
         />
 

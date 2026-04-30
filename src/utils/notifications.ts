@@ -66,21 +66,23 @@ export async function checkAndCreateLowStockNotifications() {
 
       if (users) {
         for (const user of users) {
-          // Skip if there's already an unread low_stock notification
-          const { data: existingUnread } = await supabase
+          const message = `${lowStockProducts.length} product(s) are running low on stock.`;
+
+          // Create only when content is new (gmail-like behavior after mark-as-read)
+          const { data: existingNotification } = await supabase
             .from('notifications')
             .select('id')
             .eq('user_id', user.id)
             .eq('type', 'low_stock')
-            .eq('is_read', false)
+            .eq('message', message)
             .limit(1);
 
-          if (!existingUnread?.length) {
+          if (!existingNotification?.length) {
             await createNotification({
               userId: user.id,
               type: 'low_stock',
               title: 'Low Stock Alert',
-              message: `${lowStockProducts.length} product(s) are running low on stock.`,
+              message,
             });
           }
         }
@@ -120,20 +122,22 @@ export async function checkAndCreateExpiryNotifications() {
 
       if (users) {
         for (const user of users) {
-          const { data: existingUnread } = await supabase
+          const message = `${nearExpiryBatches.length} batch(es) will expire within ${alertDays} days.`;
+
+          const { data: existingNotification } = await supabase
             .from('notifications')
             .select('id')
             .eq('user_id', user.id)
             .eq('type', 'near_expiry')
-            .eq('is_read', false)
+            .eq('message', message)
             .limit(1);
 
-          if (!existingUnread?.length) {
+          if (!existingNotification?.length) {
             await createNotification({
               userId: user.id,
               type: 'near_expiry',
               title: 'Products Near Expiry',
-              message: `${nearExpiryBatches.length} batch(es) will expire within ${alertDays} days.`,
+              message,
             });
           }
         }
@@ -164,20 +168,22 @@ export async function checkAndCreateFollowUpNotifications() {
 
       if (users) {
         for (const user of users) {
-          const { data: existingUnread } = await supabase
+          const message = `You have ${dueActivities.length} follow-up(s) due today.`;
+
+          const { data: existingNotification } = await supabase
             .from('notifications')
             .select('id')
             .eq('user_id', user.id)
             .eq('type', 'follow_up')
-            .eq('is_read', false)
+            .eq('message', message)
             .limit(1);
 
-          if (!existingUnread?.length) {
+          if (!existingNotification?.length) {
             await createNotification({
               userId: user.id,
               type: 'follow_up',
               title: 'Follow-ups Due',
-              message: `You have ${dueActivities.length} follow-up(s) due today.`,
+              message,
             });
           }
         }

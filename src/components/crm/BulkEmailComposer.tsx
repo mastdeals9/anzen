@@ -219,11 +219,23 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
         return;
       }
 
+      // Pre-encode attachments once (same for all recipients)
+      const encodedAttachments = await Promise.all(
+        attachments.map(async a => ({
+          filename: a.file.name,
+          mimeType: a.file.type || 'application/octet-stream',
+          data: await fileToBase64(a.file),
+        }))
+      );
+
       // Create campaign record immediately so it's persisted even if the browser closes
       const { data: campaign, error: campaignErr } = await supabase
         .from('bulk_email_campaigns')
         .insert({
           subject,
+          email_body: currentHtml,
+          sender_name: senderName,
+          attachments_context: encodedAttachments,
           total_recipients: selectedCustomers.length,
           sent_count: 0,
           failed_count: 0,
@@ -245,15 +257,6 @@ export function BulkEmailComposer({ selectedCustomers, onClose, onComplete }: Bu
           company_name: c.company_name,
           email: c.email,
           status: 'pending',
-        }))
-      );
-
-      // Pre-encode attachments once (same for all recipients)
-      const encodedAttachments = await Promise.all(
-        attachments.map(async a => ({
-          filename: a.file.name,
-          mimeType: a.file.type || 'application/octet-stream',
-          data: await fileToBase64(a.file),
         }))
       );
 
