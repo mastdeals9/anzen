@@ -3,6 +3,7 @@ import { Layout } from '../components/Layout';
 import { DataTable } from '../components/DataTable';
 import { Modal } from '../components/Modal';
 import { InvoiceView } from '../components/InvoiceView';
+import { DeliveryChallanView } from '../components/DeliveryChallanView';
 import { DCMultiSelect } from '../components/DCMultiSelect';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -38,6 +39,16 @@ interface SalesInvoice {
     company_name: string;
     gst_vat_type: string;
   };
+  sales_order?: {
+    so_number: string;
+    order_date: string;
+  } | null;
+  linked_challans?: Array<{
+    id: string;
+    challan_number: string;
+    challan_date: string;
+  }>;
+  fly_days?: number | null;
 }
 
 interface SOItemOption {
@@ -178,6 +189,8 @@ export function Sales() {
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<SalesInvoice | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<SalesInvoice | null>(null);
+  const [selectedFlyChallan, setSelectedFlyChallan] = useState<any | null>(null);
+  const [selectedFlyChallanItems, setSelectedFlyChallanItems] = useState<any[]>([]);
   const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([]);
   const [formData, setFormData] = useState({
     invoice_number: '',
@@ -325,10 +338,25 @@ export function Sales() {
         const paidAmount = paidData || 0;
         const balance = inv.total_amount - paidAmount;
 
+        const [soRes, dcRes] = await Promise.all([
+          inv.sales_order_id
+            ? supabase.from('sales_orders').select('so_number, order_date').eq('id', inv.sales_order_id).maybeSingle()
+            : Promise.resolve({ data: null }),
+          inv.linked_challan_ids && inv.linked_challan_ids.length > 0
+            ? supabase.from('delivery_challans').select('id, challan_number, challan_date').in('id', inv.linked_challan_ids)
+            : Promise.resolve({ data: [] })
+        ]);
+        const firstChallanDate = (dcRes.data || [])[0]?.challan_date;
+        const flyDays = (soRes.data?.order_date && firstChallanDate)
+          ? Math.ceil((new Date(firstChallanDate).getTime() - new Date(soRes.data.order_date).getTime()) / (1000 * 60 * 60 * 24))
+          : null;
         return {
           ...inv,
           paid_amount: paidAmount,
-          balance_amount: balance
+          balance_amount: balance,
+          sales_order: soRes.data || null,
+          linked_challans: dcRes.data || [],
+          fly_days: flyDays
         };
       }));
 
@@ -337,6 +365,17 @@ export function Sales() {
       console.error('Error loading invoices:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleFlyChallanClick = async (challanId: string) => {
+    const [{ data: challan }, { data: challanItems }] = await Promise.all([
+      supabase.from('delivery_challans').select('*, customers(company_name, address, city, phone, pbf_license)').eq('id', challanId).maybeSingle(),
+      supabase.from('delivery_challan_items').select('*, products(product_name, product_code, unit), batches(batch_number, expiry_date, packaging_details)').eq('challan_id', challanId)
+    ]);
+    if (challan) {
+      setSelectedFlyChallan(challan);
+      setSelectedFlyChallanItems(challanItems || []);
     }
   };
 
@@ -1282,6 +1321,32 @@ export function Sales() {
       )
     },
     {
+      key: 'fly_days',
+      label: 'Fly Days',
+      render: (_value: any, inv: SalesInvoice) => (
+        <div className="space-y-1">
+          <div className="text-xs text-gray-700 font-medium">
+            {inv.fly_days === null || inv.fly_days === undefined ? '—' : `${inv.fly_days} day(s)`}
+          </div>
+          {inv.sales_order?.so_number && (
+            <div className="text-xs">
+              <span className="inline-block px-2 py-0.5 rounded bg-blue-50 text-blue-700">SO: {inv.sales_order.so_number}</span>
+            </div>
+          )}
+          {inv.linked_challans?.map((dc) => (
+            <button
+              key={dc.id}
+              type="button"
+              onClick={() => handleFlyChallanClick(dc.id)}
+              className="block text-xs px-2 py-0.5 rounded bg-orange-50 text-orange-700 hover:underline"
+            >
+              DC: {dc.challan_number}
+            </button>
+          ))}
+        </div>
+      )
+    },
+    {
       key: 'due_date',
       label: 'Due Date',
       render: (value: any, inv: SalesInvoice) => {
@@ -1888,7 +1953,18 @@ export function Sales() {
               </button>
             </div>
           </form>
-        </Modal>
+      </Modal>
+
+      {selectedFlyChallan && (
+        <DeliveryChallanView
+          challan={selectedFlyChallan}
+          items={selectedFlyChallanItems}
+          onClose={() => {
+            setSelectedFlyChallan(null);
+            setSelectedFlyChallanItems([]);
+          }}
+        />
+      )}
 
         {viewModalOpen && selectedInvoice && (
           <InvoiceView
