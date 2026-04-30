@@ -376,7 +376,7 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer, initialV
           .order('transaction_date', { ascending: false })
           .order('transaction_number', { ascending: false }),
 
-        supabase.rpc('get_petty_cash_balance'),
+        supabase.rpc('get_petty_cash_balance_by_date', { start_date: startDate, end_date: endDate }),
 
         supabase
           .from('import_containers')
