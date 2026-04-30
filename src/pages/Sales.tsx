@@ -535,6 +535,40 @@ export function Sales() {
     }
   };
 
+  const ensureLinkedDCOptionsVisible = async (linkedDCIds: string[]) => {
+    if (!linkedDCIds || linkedDCIds.length === 0) return;
+
+    try {
+      const missingIds = linkedDCIds.filter(id => !pendingDCOptions.some(opt => opt.challan_id === id));
+      if (missingIds.length === 0) return;
+
+      const { data, error } = await supabase
+        .from('delivery_challans')
+        .select('id, challan_number, challan_date')
+        .in('id', missingIds)
+        .order('challan_date', { ascending: false });
+
+      if (error) throw error;
+
+      const linkedOptions = (data || []).map(dc => ({
+        challan_id: dc.id,
+        challan_number: dc.challan_number,
+        challan_date: dc.challan_date,
+        item_count: 0
+      }));
+
+      if (linkedOptions.length > 0) {
+        setPendingDCOptions(prev => {
+          const existingIds = new Set(prev.map(opt => opt.challan_id));
+          const toAdd = linkedOptions.filter(opt => !existingIds.has(opt.challan_id));
+          return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+        });
+      }
+    } catch (error) {
+      console.error('Error ensuring linked DC options are visible:', error);
+    }
+  };
+
   const loadPendingDCItems = async (customerId: string, excludeInvoiceId?: string) => {
     try {
       const { data, error } = await supabase
@@ -1134,6 +1168,7 @@ export function Sales() {
 
     if (invoice.linked_challan_ids && invoice.linked_challan_ids.length > 0) {
       setSelectedDCIds(invoice.linked_challan_ids);
+      await ensureLinkedDCOptionsVisible(invoice.linked_challan_ids);
     }
 
     setModalOpen(true);
