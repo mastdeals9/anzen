@@ -28,11 +28,12 @@ const BankAccountsManager = lazy(() => import('../components/finance/BankAccount
 const TaxReports = lazy(() => import('../components/finance/TaxReports').then(m => ({ default: m.TaxReports })));
 const CAReports = lazy(() => import('../components/finance/CAReports').then(m => ({ default: m.CAReports })));
 const GeneralJournalEntry = lazy(() => import('../components/finance/GeneralJournalEntry').then(m => ({ default: m.GeneralJournalEntry })));
+const IntegrityMonitor = lazy(() => import('../components/finance/IntegrityMonitor').then(m => ({ default: m.IntegrityMonitor })));
 
 type FinanceTab =
   | 'purchase' | 'receipt' | 'payment' | 'journal' | 'contra' | 'expenses' | 'petty_cash'
   | 'ledger' | 'journal_register' | 'bank_ledger' | 'party_ledger' | 'bank_recon'
-  | 'trial_balance' | 'pnl' | 'balance_sheet' | 'receivables' | 'payables' | 'ageing' | 'tax' | 'ca_reports'
+  | 'trial_balance' | 'pnl' | 'balance_sheet' | 'receivables' | 'payables' | 'ageing' | 'tax' | 'ca_reports' | 'integrity_monitor'
   | 'coa' | 'customers' | 'suppliers' | 'products' | 'banks';
 
 interface MenuItem {
@@ -82,6 +83,7 @@ const getFinanceMenu = (t: Record<string, Record<string, string>>): MenuGroup[] 
       { id: 'payables', label: t.finance.payables },
       { id: 'ageing', label: t.finance.ageing },
       { id: 'tax', label: t.finance.taxReports },
+      { id: 'integrity_monitor', label: 'Integrity Monitor' },
     ]
   },
   {
@@ -262,6 +264,8 @@ function FinanceContent() {
         return <TaxReports />;
       case 'ca_reports':
         return <CAReports />;
+      case 'integrity_monitor':
+        return <IntegrityMonitor />;
       case 'coa':
         return <ChartOfAccountsManager canManage={canManage} />;
       case 'suppliers':
