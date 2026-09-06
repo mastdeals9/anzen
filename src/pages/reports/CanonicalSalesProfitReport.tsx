@@ -138,14 +138,14 @@ export interface OrderSaleRow {
 
 function TooltipHeader({ title, tooltip }: { title: string; tooltip: string }) {
   return (
-    <div className="inline-flex items-center gap-1 group relative cursor-help">
+    <span className="inline-flex items-center gap-1 group relative cursor-help">
       <span>{title}</span>
       <HelpCircle className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-600 transition-colors" />
-      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-52 p-2 bg-gray-900 text-white text-[11px] rounded shadow-lg font-normal leading-tight text-center pointer-events-none">
+      <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-52 p-2 bg-gray-900 text-white text-[11px] rounded shadow-lg font-normal leading-tight text-center pointer-events-none">
         {tooltip}
-        <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-gray-900" />
-      </div>
-    </div>
+        <span className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-gray-900" />
+      </span>
+    </span>
   );
 }
 
@@ -430,7 +430,9 @@ export function CanonicalSalesProfitReport() {
           <p className="text-lg font-bold text-amber-700 mt-1">
             {formatCurrency(company?.sales_expenses || 0)}
           </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">Delivery &amp; loading</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            Allocated: {formatCurrency((company?.sales_expenses || 0) - (company?.unallocated_sales_expenses || 0))} · Unallocated: {formatCurrency(company?.unallocated_sales_expenses || 0)}
+          </p>
         </div>
 
         {/* Gross Profit */}
@@ -558,7 +560,18 @@ export function CanonicalSalesProfitReport() {
                         {formatNumber(p.sold_qty, 0)} {p.product_unit}
                       </td>
                       <td className="px-3 py-3 text-right text-gray-700">
-                        {p.costed_lines === 0 ? <span className="text-amber-700">Cost unavailable</span> : hasPartialCostCoverage ? <span className="text-amber-700">Known COGS {formatCurrency(p.product_cost ?? 0)}<br /><span className="text-[10px]">Partial coverage</span></span> : formatCurrency(p.avg_landed_cost)}
+                        {p.costed_lines === 0 ? (
+                          <span className="text-amber-700">Cost unavailable</span>
+                        ) : hasPartialCostCoverage ? (
+                          <div>
+                            <span className="font-medium">{formatCurrency(p.avg_landed_cost)}</span>
+                            <div className="text-[10px] text-amber-700 font-normal">
+                              Known {formatCurrency(p.product_cost ?? 0)} ({p.costed_lines}/{p.total_lines} lines)
+                            </div>
+                          </div>
+                        ) : (
+                          formatCurrency(p.avg_landed_cost)
+                        )}
                       </td>
                       <td className="px-3 py-3 text-right text-gray-900 font-medium">
                         {formatCurrency(p.avg_selling_price)}
@@ -570,15 +583,34 @@ export function CanonicalSalesProfitReport() {
                         {formatCurrency(p.net_selling_price_per_unit)}
                       </td>
                       <td className={`px-3 py-3 text-right font-medium ${isPositive ? 'text-green-700' : 'text-red-600'}`}>
-                        {hasFullCostCoverage ? formatCurrency(p.profit_per_unit) : '—'}
+                        {p.profit_per_unit != null ? (
+                          <div>
+                            <span>{formatCurrency(p.profit_per_unit)}</span>
+                            {hasPartialCostCoverage && <div className="text-[10px] text-amber-600 font-normal">(costed vol)</div>}
+                          </div>
+                        ) : '—'}
                       </td>
                       <td className="px-3 py-3 text-right">
-                        {hasPartialCostCoverage ? (
-                          <span className="text-xs text-amber-700 font-medium">Partial coverage</span>
-                        ) : <MarginBadge pct={p.costed_lines === p.total_lines ? p.profit_margin_pct : null} />}
+                        {p.profit_margin_pct != null ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <MarginBadge pct={p.profit_margin_pct} />
+                            {hasPartialCostCoverage && <span className="text-[10px] text-amber-600 font-medium">Partial coverage</span>}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-amber-700 font-medium">Cost unavailable</span>
+                        )}
                       </td>
                       <td className={`px-4 py-3 text-right font-bold text-sm ${isPositive ? 'text-green-700' : 'text-red-600'}`}>
-                        {hasFullCostCoverage ? formatCurrency(p.profit_after_sales_expense) : '—'}
+                        {p.profit_after_sales_expense != null ? (
+                          <div>
+                            <span>{formatCurrency(p.profit_after_sales_expense)}</span>
+                            {hasPartialCostCoverage && (
+                              <div className="text-[10px] text-amber-700 font-normal font-sans">
+                                Known {p.costed_lines}/{p.total_lines} lines
+                              </div>
+                            )}
+                          </div>
+                        ) : '—'}
                       </td>
                       <td className="px-3 py-3 text-center">
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 group-hover:underline">
@@ -603,7 +635,12 @@ export function CanonicalSalesProfitReport() {
                   <td className="px-3 py-3 text-right">—</td>
                   <td className="px-3 py-3 text-right">—</td>
                   <td className="px-3 py-3 text-right text-amber-800">
-                    {formatCurrency(filteredProducts.reduce((s, p) => s + p.sales_expense, 0))}
+                    <div>{formatCurrency(filteredProducts.reduce((s, p) => s + p.sales_expense, 0))}</div>
+                    {(company?.unallocated_sales_expenses || 0) > 0 && (
+                      <div className="text-[10px] font-normal text-gray-500">
+                        + {formatCurrency(company?.unallocated_sales_expenses || 0)} unallocated
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-3 text-right">—</td>
                   <td className="px-3 py-3 text-right">—</td>
@@ -611,7 +648,12 @@ export function CanonicalSalesProfitReport() {
                     <MarginBadge pct={company?.profit_margin_pct ?? null} />
                   </td>
                   <td className={`px-4 py-3 text-right text-sm ${(company?.profit_after_sales_expenses || 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                    {formatCurrency(filteredProducts.reduce((s, p) => s + (p.profit_after_sales_expense ?? 0), 0))}
+                    <div>{formatCurrency(filteredProducts.reduce((s, p) => s + (p.profit_after_sales_expense ?? 0), 0))}</div>
+                    {(company?.unallocated_sales_expenses || 0) > 0 && (
+                      <div className="text-[10px] font-normal text-gray-500">
+                        Net Co: {formatCurrency(company?.profit_after_sales_expenses || 0)}
+                      </div>
+                    )}
                   </td>
                   <td />
                 </tr>
@@ -713,7 +755,11 @@ export function CanonicalSalesProfitReport() {
               <div className="p-3 text-center">
                 <span className="text-gray-500 block">Avg Landed Cost</span>
                 <span className="font-bold text-gray-800 text-sm mt-0.5">
-                  {selectedProduct.costed_lines === selectedProduct.total_lines ? formatCurrency(selectedProduct.avg_landed_cost) : selectedProduct.costed_lines > 0 ? `Known COGS ${formatCurrency(selectedProduct.product_cost ?? 0)} · Partial coverage` : 'Cost unavailable'}
+                  {selectedProduct.costed_lines === selectedProduct.total_lines
+                    ? formatCurrency(selectedProduct.avg_landed_cost)
+                    : selectedProduct.costed_lines > 0
+                    ? `${formatCurrency(selectedProduct.avg_landed_cost)} · Partial (${selectedProduct.costed_lines}/${selectedProduct.total_lines})`
+                    : 'Cost unavailable'}
                 </span>
               </div>
               <div className="p-3 text-center">
@@ -731,7 +777,9 @@ export function CanonicalSalesProfitReport() {
               <div className="p-3 text-center bg-blue-50/50">
                 <span className="text-blue-900 font-semibold block">Total Profit</span>
                 <span className={`font-bold text-sm mt-0.5 ${(selectedProduct.profit_after_sales_expense ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                  {selectedProduct.costed_lines === selectedProduct.total_lines ? formatCurrency(selectedProduct.profit_after_sales_expense) : '—'}
+                  {selectedProduct.profit_after_sales_expense != null
+                    ? `${formatCurrency(selectedProduct.profit_after_sales_expense)}${selectedProduct.costed_lines < selectedProduct.total_lines ? ' (partial)' : ''}`
+                    : '—'}
                 </span>
               </div>
             </div>
