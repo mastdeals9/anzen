@@ -56,3 +56,24 @@ test('trigger_auto_post_expense_accounting_update enforces single active expense
     'Trigger blocks approved expense edits when active count <> 1'
   );
 });
+
+test('canonicalize_historical_repair_expense_journals migration targets ONLY EXP/26-26/139 and EXP/26/177', () => {
+  const migrationSql = readFileSync(
+    new URL('../supabase/migrations/20260906230000_canonicalize_historical_repair_expense_journals.sql', import.meta.url),
+    'utf8'
+  );
+
+  // EXP/26-26/139
+  assert.match(migrationSql, /2cde9efd-9b22-4ba6-acbe-f712d6bb0497/);
+  assert.match(migrationSql, /JE2609-0018/);
+  assert.match(migrationSql, /EXP-3b56b2ee-c157-4da8-8bdc-c0bea9b3316d/);
+
+  // EXP/26/177
+  assert.match(migrationSql, /4d89886c-eab1-4d39-8a46-f499319e1b69/);
+  assert.match(migrationSql, /JE2609-0022/);
+  assert.match(migrationSql, /EXP-e95a4775-cca4-4f38-830b-fcfd7ed5a1f3/);
+
+  // Verifies setting source_module to expenses
+  assert.match(migrationSql, /source_module = 'expenses'/);
+});
+
