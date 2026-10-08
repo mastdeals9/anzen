@@ -114,7 +114,7 @@ BEGIN
   ) THEN
     ALTER TABLE public.credit_notes ADD COLUMN nota_retur_id UUID REFERENCES public.nota_retur(id) ON DELETE SET NULL;
   END IF;
-END $$;
+END $$$;
 
 -- ============================================================================
 -- 5. FUNCTION: GENERATE NOTA RETUR NUMBER
@@ -137,7 +137,7 @@ BEGIN
   v_number := 'NR/' || v_year || '/' || v_month || '/' || lpad(v_seq::text, 4, '0');
   RETURN v_number;
 END;
-$;
+$$;
 
 ALTER TABLE public.nota_retur
   ALTER COLUMN nota_retur_number SET DEFAULT public.generate_nota_retur_number();
@@ -190,7 +190,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$;
+$$$;
 
 DROP TRIGGER IF EXISTS trg_nota_retur_linkages ON public.nota_retur;
 CREATE TRIGGER trg_nota_retur_linkages
@@ -302,7 +302,7 @@ BEGIN
     WHERE id = p_period_id;
   END IF;
 END;
-$$;
+$$$;
 
 -- ============================================================================
 -- 8. ROW LEVEL SECURITY & PERMISSIONS
