@@ -19,13 +19,15 @@ CREATE SEQUENCE IF NOT EXISTS public.nota_retur_number_seq
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS public.nota_retur (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  nomor_nota_retur TEXT NOT NULL UNIQUE,
-  tanggal_nota_retur DATE NOT NULL DEFAULT CURRENT_DATE,
+  nota_retur_number TEXT NOT NULL UNIQUE,
+  return_date DATE NOT NULL DEFAULT CURRENT_DATE,
   material_return_id UUID REFERENCES public.material_returns(id) ON DELETE SET NULL,
   credit_note_id UUID REFERENCES public.credit_notes(id) ON DELETE SET NULL,
   sales_invoice_id UUID NOT NULL REFERENCES public.sales_invoices(id) ON DELETE RESTRICT,
   original_invoice_number TEXT NOT NULL,
+  sales_invoice_number TEXT,
   original_faktur_pajak_number TEXT,
+  original_faktur_pajak_date DATE,
   customer_id UUID NOT NULL REFERENCES public.customers(id) ON DELETE RESTRICT,
   customer_name TEXT NOT NULL,
   customer_npwp TEXT,
@@ -35,15 +37,17 @@ CREATE TABLE IF NOT EXISTS public.nota_retur (
   seller_address TEXT,
   currency TEXT NOT NULL DEFAULT 'IDR',
   dpp_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
-  tax_rate NUMERIC(5,2) NOT NULL DEFAULT 11.00,
+  tax_rate NUMERIC(5,4) NOT NULL DEFAULT 0.1100 CHECK (tax_rate >= 0 AND tax_rate <= 1),
   ppn_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
   total_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
   tax_period_id UUID REFERENCES public.tax_periods(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'ready_for_review', 'submitted', 'approved', 'rejected', 'cancelled')),
-  coretax_status TEXT NOT NULL DEFAULT 'pending' CHECK (coretax_status IN ('pending', 'submitted', 'approved', 'rejected', 'cancelled')),
+  coretax_status TEXT NOT NULL DEFAULT 'draft' CHECK (coretax_status IN ('draft', 'ready_for_review', 'submitted', 'approved', 'rejected')),
   coretax_reference_number TEXT,
   coretax_submission_date TIMESTAMPTZ,
+  coretax_response_notes TEXT,
   approved_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  approved_at TIMESTAMPTZ,
   approval_date TIMESTAMPTZ,
   rejection_reason TEXT,
   notes TEXT,
@@ -61,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_nota_retur_tax_period_id ON public.nota_retur(tax
 CREATE INDEX IF NOT EXISTS idx_nota_retur_material_return_id ON public.nota_retur(material_return_id);
 CREATE INDEX IF NOT EXISTS idx_nota_retur_credit_note_id ON public.nota_retur(credit_note_id);
 CREATE INDEX IF NOT EXISTS idx_nota_retur_status ON public.nota_retur(status);
-CREATE INDEX IF NOT EXISTS idx_nota_retur_date ON public.nota_retur(tanggal_nota_retur);
+CREATE INDEX IF NOT EXISTS idx_nota_retur_date ON public.nota_retur(return_date);
 
 -- Enforce rule: only 1 active Nota Retur per Material Return (prevent duplicate tax claims)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_nota_retur_material_return_active
@@ -133,7 +137,10 @@ BEGIN
   v_number := 'NR/' || v_year || '/' || v_month || '/' || lpad(v_seq::text, 4, '0');
   RETURN v_number;
 END;
-$$;
+$;
+
+ALTER TABLE public.nota_retur
+  ALTER COLUMN nota_retur_number SET DEFAULT public.generate_nota_retur_number();
 
 -- ============================================================================
 -- 6. BIDIRECTIONAL SYNC TRIGGER BETWEEN NOTA_RETUR AND MATERIAL_RETURNS/CREDIT_NOTES
