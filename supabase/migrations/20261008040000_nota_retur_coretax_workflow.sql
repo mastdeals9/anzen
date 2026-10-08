@@ -190,7 +190,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$$;
+$$;
 
 DROP TRIGGER IF EXISTS trg_nota_retur_linkages ON public.nota_retur;
 CREATE TRIGGER trg_nota_retur_linkages
@@ -302,7 +302,7 @@ BEGIN
     WHERE id = p_period_id;
   END IF;
 END;
-$$$;
+$$;
 
 -- ============================================================================
 -- 8. ROW LEVEL SECURITY & PERMISSIONS
