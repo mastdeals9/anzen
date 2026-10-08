@@ -1023,10 +1023,14 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
     }
   };
 
-  const filteredVouchers = vouchers.filter(v =>
-    v.voucher_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.suppliers?.company_name?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const search = searchTerm.trim().toLowerCase();
+  const filteredVouchers = !search
+    ? vouchers
+    : vouchers.filter(v =>
+        v.voucher_number?.toLowerCase().includes(search) ||
+        v.suppliers?.company_name?.toLowerCase().includes(search) ||
+        v.finance_staff_master?.full_name?.toLowerCase().includes(search)
+      );
 
   if (loading) return <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
 
