@@ -114,7 +114,7 @@ BEGIN
   ) THEN
     ALTER TABLE public.credit_notes ADD COLUMN nota_retur_id UUID REFERENCES public.nota_retur(id) ON DELETE SET NULL;
   END IF;
-END $$$;
+END $$;
 
 -- ============================================================================
 -- 5. FUNCTION: GENERATE NOTA RETUR NUMBER
