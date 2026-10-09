@@ -577,7 +577,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     applied_amount: number;
     available_amount: number;
   }>>([]);
-  const [applySalaryAdvance, setApplySalaryAdvance] = useState(true);
+  const [selectedSalaryAdvanceIds, setSelectedSalaryAdvanceIds] = useState<string[]>([]);
   const [salaryCalculation, setSalaryCalculation] = useState<{
     gross_salary: number;
     outstanding_salary_advances: number;
@@ -729,7 +729,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     if (formData.expense_category !== 'salary' || !selectedStaffId) {
       setSalaryAdvances([]);
       setSalaryCalculation(null);
-      setApplySalaryAdvance(true);
+      setSelectedSalaryAdvanceIds([]);
       return;
     }
     let cancelled = false;
@@ -757,11 +757,20 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
       const preservingHistoricalValues = Boolean(editingExpense?.id)
         && salaryInitialLoadRef.current !== editingExpense?.id;
       if (preservingHistoricalValues) salaryInitialLoadRef.current = editingExpense!.id;
-      setSalaryAdvances((advancesResult.data || []) as typeof salaryAdvances);
+      
       const existingApplied = editingExpense?.id
         ? Number((await supabase.rpc('get_salary_advance_applications', { p_salary_expense_id: editingExpense.id })).data?.reduce((sum: number, item: { applied_amount: number }) => sum + Number(item.applied_amount || 0), 0) ?? 0)
         : 0;
-      const advanceApplied = existingApplied || Number(calculation?.outstanding_salary_advances || 0);
+      const loadedAdvances = (advancesResult.data || []) as typeof salaryAdvances;
+      setSalaryAdvances(loadedAdvances);
+      setSelectedSalaryAdvanceIds(current => {
+        const valid = current.filter(id => loadedAdvances.some(advance => advance.advance_id === id));
+        return valid.length === current.length ? current : valid;
+      });
+      const selectedAdvanceTotal = loadedAdvances
+        .filter(advance => selectedSalaryAdvanceIds.includes(advance.advance_id))
+        .reduce((sum, advance) => sum + Number(advance.available_amount || 0), 0);
+      const advanceApplied = existingApplied > 0 ? existingApplied : selectedAdvanceTotal;
       setPersistedSalaryAdvanceApplied(existingApplied);
       setSalaryCalculation(calculation ? {
         ...calculation,
@@ -770,8 +779,8 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
         outstanding_salary_advances: advanceApplied,
         net_salary_payable: Math.max((preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary) - advanceApplied - (preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount) - calculation.bpjs_amount, 0),
       } : null);
-      // Saving a reopened settlement must not create another FIFO application.
-      setApplySalaryAdvance(!editingExpense || existingApplied === 0);
+      // Existing settlement links are persisted facts; new deductions require explicit advance selections.
+      // Only explicitly selected advances can be settled.
       if (calculation && !preservingHistoricalValues) {
         const pph21Code = taxCodes.find((code) => code.code.toUpperCase() === 'PPH21');
         setFormData((previous) => ({
@@ -787,7 +796,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     return () => {
       cancelled = true;
     };
-  }, [formData.expense_category, formData.expense_date, formData.amount, selectedStaffId, taxCodes, editingExpense?.id]);
+  }, [formData.expense_category, formData.expense_date, formData.amount, selectedStaffId, taxCodes, editingExpense?.id, selectedSalaryAdvanceIds]);
 
   // A deliberate PPh21 edit is a UI override, not a new payroll calculation.
   // Keep the canonical advances/BPJS result and update only the displayed
@@ -1558,10 +1567,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           await saveFinanceExpense(editingExpense.id, expenseData);
         }
 
-        if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && applySalaryAdvance && persistedSalaryAdvanceApplied === 0) {
-          const { error: advanceError } = await supabase.rpc('apply_salary_advances_to_expense', {
+        if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0 && persistedSalaryAdvanceApplied === 0) {
+          const { error: advanceError } = await supabase.rpc('apply_selected_salary_advances_to_expense', {
             p_salary_expense_id: editingExpense.id,
-            p_apply: true,
+            p_advance_ids: selectedSalaryAdvanceIds,
           });
           if (advanceError) throw advanceError;
         }
@@ -1622,10 +1631,10 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
         const newExpensePayload = { ...expenseData, created_by: user.id };
         const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
-        if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && applySalaryAdvance) {
-          const { error: advanceError } = await supabase.rpc('apply_salary_advances_to_expense', {
+        if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0) {
+          const { error: advanceError } = await supabase.rpc('apply_selected_salary_advances_to_expense', {
             p_salary_expense_id: newExpenseId,
-            p_apply: true,
+            p_advance_ids: selectedSalaryAdvanceIds,
           });
           if (advanceError) throw advanceError;
         }
@@ -2044,7 +2053,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     setSelectedStaffId('');
     setSalaryAdvances([]);
     setSalaryCalculation(null);
-    setApplySalaryAdvance(true);
+    setSelectedSalaryAdvanceIds([]);
     setSelectedUtilityId('');
     setPeriodLabel('');
     setFormData({
@@ -3474,17 +3483,33 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <div className="text-xs font-semibold text-amber-900">Canonical Salary Calculation</div>
-                          <div className="text-[10px] text-amber-700">Outstanding advances are applied automatically, oldest first.</div>
+                          <div className="text-[10px] text-amber-700">Select only advances confirmed as still outstanding. Unchecked advances will not be deducted.</div>
                         </div>
-                        <span className="text-[10px] font-semibold text-emerald-700">Automatic FIFO</span>
+                        <span className="text-[10px] font-semibold text-blue-700">Manual selection</span>
                       </div>
                       {salaryAdvances.length > 0 && <div className="mt-2 space-y-1 text-xs">
-                        {salaryAdvances.map((advance) => (
-                          <div key={advance.advance_id} className="flex items-center justify-between border-t border-amber-100 pt-1 text-amber-900">
-                            <span>{advance.voucher_number} · {new Date(advance.voucher_date).toLocaleDateString('en-GB')}</span>
-                            <span className="font-mono">Available {formatCurrency(advance.available_amount, expenseFormCurrency)}</span>
-                          </div>
-                        ))}
+                        {salaryAdvances.map((advance) => {
+                          const checked = selectedSalaryAdvanceIds.includes(advance.advance_id);
+                          return (
+                            <label key={advance.advance_id} className="flex items-center justify-between gap-3 border-t border-amber-100 pt-1 text-amber-900 cursor-pointer">
+                              <span className="flex min-w-0 items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={Number(advance.available_amount || 0) <= 0 || (Boolean(editingExpense) && persistedSalaryAdvanceApplied > 0)}
+                                  onChange={(e) => setSelectedSalaryAdvanceIds(current =>
+                                    e.target.checked
+                                      ? [...current, advance.advance_id]
+                                      : current.filter(id => id !== advance.advance_id)
+                                  )}
+                                  className="h-3.5 w-3.5 rounded border-amber-400"
+                                />
+                                <span>{advance.voucher_number} · {new Date(advance.voucher_date).toLocaleDateString('en-GB')}</span>
+                              </span>
+                              <span className="font-mono whitespace-nowrap">Available {formatCurrency(advance.available_amount, expenseFormCurrency)}</span>
+                            </label>
+                          );
+                        })}
                       </div>}
                       <div className="mt-2 grid grid-cols-5 gap-2 border-t border-amber-200 pt-2 text-xs">
                         <div><span className="text-amber-700">Gross Salary</span><div className="font-mono font-semibold text-amber-950">{formatCurrency(salaryCalculation.gross_salary, expenseFormCurrency)}</div></div>
