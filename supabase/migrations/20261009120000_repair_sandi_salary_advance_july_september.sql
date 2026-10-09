@@ -266,7 +266,6 @@ BEGIN
   -- Existing bank allocation remains Rp1.85m; the extra Rp650k is settled against advances.
   UPDATE public.finance_expenses
      SET amount = 2500000,
-         settlement_amount = 2500000,
          paid_amount = 2500000
    WHERE id = c_july_expense_id;
 
