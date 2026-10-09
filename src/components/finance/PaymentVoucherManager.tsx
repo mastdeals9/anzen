@@ -1143,19 +1143,24 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
                 </button>
               );
             } },
-            { header: 'Bank',       cell: (v) => v.bank_accounts
-              ? `${v.bank_accounts.alias || v.bank_accounts.account_name} (${v.bank_accounts.currency})`
-              : <span className="text-gray-400">—</span> },
+            { header: 'Bank', cell: (v) => v.payment_purpose === 'salary_advance_settlement'
+              ? <span className="text-purple-700 text-[10px] font-semibold">Internal settlement</span>
+              : v.bank_accounts
+                ? `${v.bank_accounts.alias || v.bank_accounts.account_name} (${v.bank_accounts.currency})`
+                : <span className="text-gray-400">—</span> },
             { header: 'Bank Debit', align: 'right', cell: (v) => {
+              if (v.payment_purpose === 'salary_advance_settlement') {
+                return <span className="text-gray-500 text-[10px]">No bank payment</span>;
+              }
               const bankCcy = v.bank_accounts?.currency || v.payment_currency || 'IDR';
               const invCcy = v.invoice_currency || 'IDR';
               const isCross = invCcy !== bankCcy && v.bank_amount != null && v.bank_amount > 0;
               const debit = isCross ? (v.bank_amount || 0) : (v.amount || 0) + (v.bank_charge || 0);
               return <span className="font-medium text-blue-700">{fmt(debit, bankCcy)}</span>;
             } },
-            { header: 'Net Paid',   align: 'right', cell: (v) => (
-              <span className="font-medium text-red-600">{fmt(v.net_amount, v.invoice_currency || 'IDR')}</span>
-            ) },
+            { header: 'Net Paid', align: 'right', cell: (v) => v.payment_purpose === 'salary_advance_settlement'
+              ? <span className="text-gray-500 text-[10px]">Salary deduction</span>
+              : <span className="font-medium text-red-600">{fmt(v.net_amount, v.invoice_currency || 'IDR')}</span> },
             ...(canManage ? [{
               header: 'Actions',
               align: 'center' as const,
