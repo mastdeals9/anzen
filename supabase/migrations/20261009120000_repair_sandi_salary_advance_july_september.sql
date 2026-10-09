@@ -272,19 +272,19 @@ BEGIN
   v_july_settlement_number := public.next_payment_voucher_number(DATE '2026-07-31');
   INSERT INTO public.payment_vouchers(
     voucher_number, voucher_date, supplier_id, payment_method, bank_account_id,
-    reference_number, amount, pph_amount, net_amount, description, document_urls,
+    reference_number, amount, pph_amount, description, document_urls,
     created_by, coa_account_id, payment_currency, exchange_rate, bank_amount,
     bank_charge, is_posted, staff_id, currency_code, transaction_currency,
     functional_currency, bank_account_currency, payment_purpose, invoice_currency,
     invoice_amount, payment_amount, bank_currency, converted_amount, actual_bank_debit,
-    salary_advance_applied_amount, salary_advance_status, settlement_amount
+    salary_advance_applied_amount, salary_advance_status
   ) VALUES (
     v_july_settlement_number, DATE '2026-07-31', NULL, 'advance_adjustment', NULL,
-    'HIST-SALARY-EXP-26-26-122', 650000, 0, 650000,
+    'HIST-SALARY-EXP-26-26-122', 650000, 0,
     'Salary Advance Recovery - EXP/26-26/122 (PV/26-26/012 + PV/26-26/013)',
-    ARRAY[]::text[], v_settlement.created_by, NULL, 'IDR', 1, 0, 0, false,
+    ARRAY[]::text[], v_settlement.created_by, NULL, 'IDR', 1, NULL, 0, false,
     c_staff_id, 'IDR', 'IDR', 'IDR', 'IDR', 'salary_advance_settlement',
-    'IDR', 650000, 650000, 'IDR', 650000, 0, 0, 'not_applicable', 650000
+    'IDR', 650000, 650000, 'IDR', 650000, NULL, 0, 'not_applicable'
   ) RETURNING id INTO v_july_settlement_id;
 
   -- Reverse the old July expense journal, preserving it for audit.
@@ -472,13 +472,11 @@ BEGIN
 
   UPDATE public.payment_vouchers
      SET amount = 500000,
-         net_amount = 500000,
          invoice_amount = 500000,
          payment_amount = 500000,
          converted_amount = 500000,
-         bank_amount = 0,
-         actual_bank_debit = 0,
-         settlement_amount = 500000,
+         bank_amount = NULL,
+         actual_bank_debit = NULL,
          journal_entry_id = v_september_replacement_je_id,
          is_posted = true
    WHERE id = c_settlement_021;
