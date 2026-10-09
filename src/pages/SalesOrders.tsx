@@ -87,7 +87,6 @@ interface SalesOrder {
   tax_amount: number;
   total_amount: number;
   commercial_usd_to_idr_rate?: number | null;
-  commercial_idr_to_usd_rate?: number | null;
   created_by: string;
   created_at: string;
   inquiry_id?: string | null;
@@ -103,18 +102,6 @@ interface LinkedDeliveryChallan { id: string; challan_number: string; challan_da
 interface LinkedSalesInvoice { id: string; invoice_number: string; invoice_date: string; payment_status: string; total_amount: number; }
 type SortField = 'status' | 'date' | 'so_number' | 'customer' | 'amount';
 type SortDirection = 'asc' | 'desc';
-
-const getOrderBackfillRate = (order: SalesOrder): number | null => {
-  const raw = String(order.currency || 'IDR').toUpperCase() === 'USD'
-    ? order.commercial_usd_to_idr_rate
-    : order.commercial_idr_to_usd_rate;
-  const value = raw == null ? NaN : Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : null;
-};
-
-const hasOrderBackfillRate = (order: SalesOrder): boolean => getOrderBackfillRate(order) !== null;
-const orderBackfillDirection = (order: SalesOrder): 'USD_TO_IDR' | 'IDR_TO_USD' =>
-  String(order.currency || 'IDR').toUpperCase() === 'USD' ? 'USD_TO_IDR' : 'IDR_TO_USD';
 
 export default function SalesOrders() {
   const { profile } = useAuth();
@@ -425,9 +412,9 @@ export default function SalesOrders() {
 
     if (activeTab === 'fx_backfill') {
       if (backfillFilter === 'missing') {
-        filtered = filtered.filter(order => !hasOrderBackfillRate(order));
+        filtered = filtered.filter(order => !order.commercial_usd_to_idr_rate || Number(order.commercial_usd_to_idr_rate) <= 0);
       } else if (backfillFilter === 'set') {
-        filtered = filtered.filter(order => hasOrderBackfillRate(order));
+        filtered = filtered.filter(order => order.commercial_usd_to_idr_rate && Number(order.commercial_usd_to_idr_rate) > 0);
       }
     }
 
@@ -460,24 +447,17 @@ export default function SalesOrders() {
       return;
     }
     const num = parseFloat(rawVal.replace(/,/g, ''));
-    const direction = orderBackfillDirection(order);
-    if (isNaN(num) || num <= 0 || (direction === 'IDR_TO_USD' && num >= 1) || (direction === 'USD_TO_IDR' && num < 1)) {
-      showToast({
-        type: 'error',
-        title: 'Invalid Rate Direction',
-        message: direction === 'IDR_TO_USD'
-          ? 'For an IDR Sales Order enter the IDR→USD rate below 1 (for example 0.000058).'
-          : 'For a USD Sales Order enter the USD→IDR rate (for example 17850).',
-      });
+    if (isNaN(num) || num <= 0) {
+      showToast({ type: 'error', title: 'Invalid Rate', message: 'Please enter a valid positive exchange rate' });
       return;
     }
 
     setBackfillSaving((prev) => ({ ...prev, [order.id]: true }));
     try {
-      const { data, error } = await supabase.rpc('update_sales_order_commercial_fx_rate', {
+      const { data, error } = await supabase.rpc('update_sales_order_commercial_rate', {
         p_so_id: order.id,
         p_new_rate: num,
-        p_reason: 'Historical BCA selling FX rate backfill (' + direction + ')',
+        p_reason: 'Historical commercial FX rate backfill',
       });
 
       if (error) throw error;
@@ -485,22 +465,14 @@ export default function SalesOrders() {
         throw new Error(data.message || 'Failed to update rate');
       }
 
-      const normalizedUsdToIdr = direction === 'IDR_TO_USD' ? 1 / num : num;
-      const idrToUsd = direction === 'IDR_TO_USD' ? num : null;
       showToast({
         type: 'success',
         title: 'Rate Saved',
-        message: direction === 'IDR_TO_USD'
-          ? 'Exchange rate for ' + order.so_number + ' updated to ' + num.toFixed(12) + ' USD / IDR'
-          : 'Exchange rate for ' + order.so_number + ' updated to Rp ' + num.toLocaleString('id-ID') + ' / USD',
+        message: `Exchange rate for ${order.so_number} updated to Rp ${num.toLocaleString('id-ID')} / USD`,
       });
 
       setSalesOrders((prev) =>
-        prev.map((o) => (o.id === order.id ? {
-          ...o,
-          commercial_usd_to_idr_rate: normalizedUsdToIdr,
-          commercial_idr_to_usd_rate: idrToUsd,
-        } : o))
+        prev.map((o) => (o.id === order.id ? { ...o, commercial_usd_to_idr_rate: num } : o))
       );
       setBackfillRates((prev) => {
         const next = { ...prev };
@@ -686,7 +658,7 @@ export default function SalesOrders() {
       if (!user) throw new Error('Not authenticated');
 
       const targetOrder = salesOrders.find(o => o.id === orderId);
-      if (targetOrder && String(targetOrder.currency || 'IDR').toUpperCase() === 'IDR' && (targetOrder.commercial_usd_to_idr_rate == null || targetOrder.commercial_usd_to_idr_rate <= 0)) {
+      if (targetOrder && targetOrder.currency === 'IDR' && (targetOrder.commercial_usd_to_idr_rate == null || targetOrder.commercial_usd_to_idr_rate <= 0)) {
         const hasQuotedUsd = targetOrder.sales_order_items?.some(
           (item: any) => item.quoted_usd_unit_price != null && Number(item.quoted_usd_unit_price) > 0
         );
@@ -899,9 +871,9 @@ export default function SalesOrders() {
             }`}
           >
             <span>Exchange Rate Backfill</span>
-            {salesOrders.some((o) => !hasOrderBackfillRate(o)) && (
+            {salesOrders.some((o) => !o.commercial_usd_to_idr_rate || Number(o.commercial_usd_to_idr_rate) <= 0) && (
               <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-800 border border-amber-300">
-                {salesOrders.filter((o) => !hasOrderBackfillRate(o)).length} Missing
+                {salesOrders.filter((o) => !o.commercial_usd_to_idr_rate || Number(o.commercial_usd_to_idr_rate) <= 0).length} Missing
               </span>
             )}
           </button>
@@ -983,7 +955,7 @@ export default function SalesOrders() {
         {activeTab === 'fx_backfill' ? (
           <div className="overflow-x-auto">
             <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-900">
-              <span className="font-semibold text-amber-950">Commercial FX Backfill:</span> Use the rate direction of the original Sales Order. USD orders use USD→IDR; IDR orders use IDR→USD (the reciprocal of the dated BCA USD selling rate). If a USD Sales Order was invoiced/delivered in IDR, derive its implied rate from the matching IDR document subtotal ÷ USD Sales Order subtotal. The normalized USD→IDR reference remains available to the FX Business Dashboard; issued invoices, delivery challans, journals, and inventory COGS are not rewritten.
+              <span className="font-semibold text-amber-950">Commercial Exchange Rate Backfill:</span> Enter historical USD → IDR exchange rates used for customer commercial pricing agreements. This field serves as a commercial pricing reference and feeds the FX Business Dashboard; it never modifies issued sales invoices, delivery challans, accounting journals, or inventory COGS.
             </div>
             <table className="w-full min-w-[1200px]">
               <thead className="bg-gray-50 border-b border-gray-200">
@@ -992,8 +964,8 @@ export default function SalesOrders() {
                   <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">SO Date</th>
                   <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Customer</th>
                   <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider">Currency</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Current FX Rate (SO Currency)</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">New FX Rate</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Current Exchange Rate</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">New Exchange Rate</th>
                   <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
                   <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Linked DC</th>
                   <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Linked Invoice</th>
@@ -1016,7 +988,7 @@ export default function SalesOrders() {
                   </tr>
                 ) : (
                   filteredOrders.map((order) => {
-                    const currentRateNum = getOrderBackfillRate(order);
+                    const currentRateNum = order.commercial_usd_to_idr_rate ? Number(order.commercial_usd_to_idr_rate) : null;
                     const dcs = soLinkedChallans.get(order.id) || [];
                     const invs = soLinkedInvoices.get(order.id) || [];
                     const isSaving = !!backfillSaving[order.id];
@@ -1055,14 +1027,9 @@ export default function SalesOrders() {
 
                         {/* 5. Current Exchange Rate */}
                         <td className="px-3 py-2.5 whitespace-nowrap text-xs">
-                          {currentRateNum !== null ? (
-                            <span
-                              className="font-mono font-medium text-gray-800"
-                              title={orderBackfillDirection(order) === 'USD_TO_IDR' ? 'BCA USD selling rate: IDR per USD' : 'IDR to USD reciprocal rate'}
-                            >
-                              {orderBackfillDirection(order) === 'USD_TO_IDR'
-                                ? 'Rp ' + currentRateNum.toLocaleString('id-ID', { maximumFractionDigits: 2 }) + ' / USD'
-                                : currentRateNum.toFixed(12) + ' USD / IDR'}
+                          {currentRateNum && currentRateNum > 0 ? (
+                            <span className="font-mono font-medium text-gray-800">
+                              Rp {currentRateNum.toLocaleString('id-ID', { maximumFractionDigits: 2 })} / USD
                             </span>
                           ) : (
                             <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-300">
@@ -1073,14 +1040,12 @@ export default function SalesOrders() {
 
                         {/* 6. New Exchange Rate */}
                         <td className="px-3 py-2.5 whitespace-nowrap">
-                          <div className="relative w-40">
-                            {orderBackfillDirection(order) === 'USD_TO_IDR' && (
-                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-mono">Rp</span>
-                            )}
+                          <div className="relative w-36">
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-mono">Rp</span>
                             <input
                               type="text"
                               inputMode="decimal"
-                              placeholder={currentRateNum !== null ? String(currentRateNum) : (orderBackfillDirection(order) === 'USD_TO_IDR' ? 'e.g. 17900' : 'e.g. 0.000056')}
+                              placeholder={currentRateNum ? String(currentRateNum) : "e.g. 17735"}
                               value={inputVal}
                               onChange={(e) => {
                                 const val = e.target.value;
@@ -1092,7 +1057,7 @@ export default function SalesOrders() {
                                   handleSaveBackfillRate(order);
                                 }
                               }}
-                              className={orderBackfillDirection(order) === 'USD_TO_IDR' ? 'w-full pl-8 pr-2 py-1 text-xs font-mono border rounded border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white' : 'w-full pl-2 pr-2 py-1 text-xs font-mono border rounded border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white'}
+                              className="w-full pl-8 pr-2 py-1 text-xs font-mono border rounded border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
                             />
                           </div>
                         </td>
