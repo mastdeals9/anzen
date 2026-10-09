@@ -32,6 +32,7 @@ DECLARE
   v_bank_line public.bank_statement_lines%ROWTYPE;
   v_bank_allocation public.bank_statement_allocations%ROWTYPE;
   v_july_settlement_id uuid;
+  v_july_settlement_je_id uuid;
   v_july_settlement_number text;
   v_july_reversal_id uuid;
   v_september_reversal_id uuid;
@@ -358,6 +359,33 @@ BEGIN
      SET journal_entry_id = v_july_replacement_je_id
    WHERE id = c_july_bank_allocation_id;
 
+  -- Post the internal July settlement journal: Dr AP, Cr Staff Advances.
+  v_entry_number := public.next_journal_entry_number();
+  INSERT INTO public.journal_entries(
+    entry_number, entry_date, period_id, source_module, reference_id, reference_number,
+    description, transaction_category, total_debit, total_credit, is_posted, posted_at,
+    posted_by, created_by, transaction_currency, functional_currency, exchange_rate,
+    amounts_are_functional
+  ) VALUES (
+    v_entry_number, DATE '2026-07-31', v_period_id, 'payment', v_july_settlement_id,
+    v_july_settlement_number,
+    'Salary Advance Settlement - Sandi July advances PV/26-26/012 and PV/26-26/013',
+    'salary_advance_settlement', 650000, 650000, true, now(), auth.uid(),
+    v_settlement.created_by, 'IDR', 'IDR', 1, true
+  ) RETURNING id INTO v_july_settlement_je_id;
+
+  INSERT INTO public.journal_entry_lines(
+    journal_entry_id, line_number, account_id, description, debit, credit,
+    transaction_currency, transaction_debit, transaction_credit, functional_currency, exchange_rate
+  ) VALUES
+    (v_july_settlement_je_id, 1, v_ap_coa, 'July salary payable cleared by advance deduction', 650000, 0, 'IDR', 650000, 0, 'IDR', 1),
+    (v_july_settlement_je_id, 2, v_advance_coa, 'Clear July staff advances PV/26-26/012 + PV/26-26/013', 0, 650000, 'IDR', 0, 650000, 'IDR', 1);
+
+  UPDATE public.payment_vouchers
+     SET journal_entry_id = v_july_settlement_je_id,
+         is_posted = true
+   WHERE id = v_july_settlement_id;
+
   INSERT INTO public.voucher_allocations(
     voucher_type, payment_voucher_id, finance_expense_id, allocated_amount,
     allocated_currency, payment_kind
@@ -462,24 +490,6 @@ BEGIN
    WHERE payment_voucher_id = c_settlement_021
      AND finance_expense_id = c_september_expense_id
      AND abs(allocated_amount - 1150000) < 0.01;
-
-  UPDATE public.payment_vouchers
-     SET journal_entry_id = (
-       SELECT v_july_settlement_id
-     )
-   WHERE id = v_july_settlement_id;
-
-  UPDATE public.payment_vouchers
-     SET journal_entry_id = (
-       SELECT id FROM public.journal_entries
-        WHERE source_module = 'payment'
-          AND reference_id = v_july_settlement_id
-          AND reference_number = v_july_settlement_number
-          AND is_posted = true
-        ORDER BY created_at DESC LIMIT 1
-     ),
-         is_posted = true
-   WHERE id = v_july_settlement_id;
 
   -- Add explicit audit rows for the reclassified application links and corrected settlement.
   INSERT INTO public.audit_logs(table_name, record_id, action_type, old_values, new_values, user_id)
