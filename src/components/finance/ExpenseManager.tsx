@@ -729,7 +729,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
     if (formData.expense_category !== 'salary' || !selectedStaffId) {
       setSalaryAdvances([]);
       setSalaryCalculation(null);
-      setSelectedSalaryAdvanceIds([]);
+      setSelectedSalaryAdvanceIds(current => current.length ? [] : current);
       return;
     }
     let cancelled = false;
