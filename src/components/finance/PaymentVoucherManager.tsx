@@ -204,6 +204,7 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [voucherView, setVoucherView] = useState<'payments' | 'settlements' | 'all'>('payments');
   const [allocations, setAllocations] = useState<{ invoiceId: string; amount: number; currency: string }[]>([]);
   const [expenseBillAllocations, setExpenseBillAllocations] = useState<{ expenseId: string; amount: number }[]>([]);
   const [outstandingExpenseBills, setOutstandingExpenseBills] = useState<OutstandingExpenseBillForPV[]>([]);
@@ -1024,13 +1025,22 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
   };
 
   const search = searchTerm.trim().toLowerCase();
-  const filteredVouchers = !search
-    ? vouchers
-    : vouchers.filter(v =>
-        v.voucher_number?.toLowerCase().includes(search) ||
-        v.suppliers?.company_name?.toLowerCase().includes(search) ||
-        v.finance_staff_master?.full_name?.toLowerCase().includes(search)
-      );
+  const paymentVoucherCount = vouchers.filter(v => v.payment_purpose !== 'salary_advance_settlement').length;
+  const settlementVoucherCount = vouchers.filter(v => v.payment_purpose === 'salary_advance_settlement').length;
+  const filteredVouchers = vouchers.filter(v => {
+    const isSettlement = v.payment_purpose === 'salary_advance_settlement';
+    const matchesView =
+      voucherView === 'all' ||
+      (voucherView === 'settlements' ? isSettlement : !isSettlement);
+    if (!matchesView) return false;
+    if (!search) return true;
+    return (
+      v.voucher_number?.toLowerCase().includes(search) ||
+      v.suppliers?.company_name?.toLowerCase().includes(search) ||
+      v.finance_staff_master?.full_name?.toLowerCase().includes(search) ||
+      v.description?.toLowerCase().includes(search)
+    );
+  });
 
   if (loading) return <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
 
@@ -1048,15 +1058,34 @@ export function PaymentVoucherManager({ canManage, initialViewVoucherId, onIniti
           </button>
         )}
         toolbar={
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-3 h-3" />
-            <input name="search_term" aria-label="Search payments..."
-              type="text"
-              placeholder="Search payments..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-7 pl-7 pr-2 text-xs border border-gray-300 rounded"
-            />
+          <div className="flex flex-1 min-w-0 flex-wrap items-center gap-2">
+            <div className="relative w-full max-w-xs">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 w-3 h-3" />
+              <input name="search_term" aria-label="Search payments..."
+                type="text"
+                placeholder="Search voucher, supplier, or staff..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full h-7 pl-7 pr-2 text-xs border border-gray-300 rounded"
+              />
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 p-0.5" role="group" aria-label="Payment voucher type">
+              <button type="button" onClick={() => setVoucherView('payments')} aria-pressed={voucherView === 'payments'}
+                className={`h-6 px-2 rounded text-[11px] font-medium whitespace-nowrap ${voucherView === 'payments' ? 'bg-white text-blue-700 shadow-sm border border-gray-200' : 'text-gray-600 hover:bg-white'}`}>
+                Payments ({paymentVoucherCount})
+              </button>
+              <button type="button" onClick={() => setVoucherView('settlements')} aria-pressed={voucherView === 'settlements'}
+                className={`h-6 px-2 rounded text-[11px] font-medium whitespace-nowrap ${voucherView === 'settlements' ? 'bg-white text-purple-700 shadow-sm border border-gray-200' : 'text-gray-600 hover:bg-white'}`}>
+                Advance Settlements ({settlementVoucherCount})
+              </button>
+              <button type="button" onClick={() => setVoucherView('all')} aria-pressed={voucherView === 'all'}
+                className={`h-6 px-2 rounded text-[11px] font-medium whitespace-nowrap ${voucherView === 'all' ? 'bg-white text-gray-900 shadow-sm border border-gray-200' : 'text-gray-600 hover:bg-white'}`}>
+                All
+              </button>
+            </div>
+            {voucherView === 'settlements' && (
+              <span className="text-[10px] text-purple-700">Internal salary deductions — no bank/cash payment</span>
+            )}
           </div>
         }
       >
