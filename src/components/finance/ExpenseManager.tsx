@@ -1567,7 +1567,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
           await saveFinanceExpense(editingExpense.id, expenseData);
         }
 
-        if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0 && persistedSalaryAdvanceApplied === 0) {
+        if (formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0 && persistedSalaryAdvanceApplied === 0) {
           const { error: advanceError } = await supabase.rpc('apply_selected_salary_advances_to_expense', {
             p_salary_expense_id: editingExpense.id,
             p_advance_ids: selectedSalaryAdvanceIds,
@@ -1631,7 +1631,7 @@ export function ExpenseManager({ canManage, initialViewExpenseId, onInitialViewH
 
         const newExpensePayload = { ...expenseData, created_by: user.id };
         const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
-        if (!selectedBankTransactionId && formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0) {
+        if (formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0) {
           const { error: advanceError } = await supabase.rpc('apply_selected_salary_advances_to_expense', {
             p_salary_expense_id: newExpenseId,
             p_advance_ids: selectedSalaryAdvanceIds,
