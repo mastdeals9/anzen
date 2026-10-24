@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Search, ArrowUpCircle, Printer, Lock, RotateCcw, CheckCircle, X, ExternalLink, Info } from 'lucide-react';
+import { Search, ArrowUpCircle, Printer, Lock, RotateCcw, CheckCircle, X, ExternalLink, Info, Link2 } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
 import { SearchableSelect } from '../SearchableSelect';
 import { MoneyInput } from '../MoneyInput';
@@ -93,6 +93,8 @@ interface PaymentVoucher {
   is_posted: boolean;
   journal_entry_id: string | null;
   bank_statement_line_id?: string | null;
+  bank_link_status?: 'linked' | 'partial' | 'unlinked' | 'unknown';
+  bank_linked_amount?: number;
   bank_statement_line?: BankTransactionLine | null;
   bank_statement_lines?: BankTransactionLine[];
   suppliers?: { company_name: string };
@@ -516,23 +518,37 @@ export function PaymentVoucherManager({
 
       // Canonical bank allocations are authoritative and support one bank
       // event settling many vouchers/documents. Legacy journal links remain a
-      // compatibility fallback only.
+      // compatibility fallback only, avoiding double counting.
+      const canonicalAmounts = new Map<string, number>();
+      let linkStatusFailed = false;
+
       if (voucherIds.length > 0) {
-        const { data: canonicalBankAllocations, error: canonicalBankError } = await supabase
-          .from('bank_statement_allocations')
-          .select('document_id, bank_statement_lines(id, transaction_date, description, reference, debit_amount, credit_amount, bank_account_id, bank_accounts(bank_name, account_name, account_number, alias, currency))')
-          .eq('document_type', 'payment')
-          .in('document_id', voucherIds);
-        if (canonicalBankError) throw canonicalBankError;
-        for (const allocation of (canonicalBankAllocations || []) as any[]) {
-          const line = Array.isArray(allocation.bank_statement_lines)
-            ? allocation.bank_statement_lines[0]
-            : allocation.bank_statement_lines;
-          if (line) {
-            const lines = bankLinesByPaymentId.get(allocation.document_id) || [];
-            if (!lines.some(existing => existing.id === line.id)) lines.push(line as BankTransactionLine);
-            bankLinesByPaymentId.set(allocation.document_id, lines);
+        try {
+          const { data: canonicalBankAllocations, error: canonicalBankError } = await supabase
+            .from('bank_statement_allocations')
+            .select('document_id, allocation_amount, bank_statement_lines(id, transaction_date, description, reference, debit_amount, credit_amount, bank_account_id, bank_accounts(bank_name, account_name, account_number, alias, currency))')
+            .eq('document_type', 'payment')
+            .in('document_id', voucherIds);
+          if (canonicalBankError) throw canonicalBankError;
+          for (const allocation of (canonicalBankAllocations || []) as any[]) {
+            const line = Array.isArray(allocation.bank_statement_lines)
+              ? allocation.bank_statement_lines[0]
+              : allocation.bank_statement_lines;
+            if (line) {
+              const lines = bankLinesByPaymentId.get(allocation.document_id) || [];
+              if (!lines.some(existing => existing.id === line.id)) lines.push(line as BankTransactionLine);
+              bankLinesByPaymentId.set(allocation.document_id, lines);
+            }
+            if (allocation.document_id) {
+              canonicalAmounts.set(
+                allocation.document_id,
+                (canonicalAmounts.get(allocation.document_id) || 0) + Number(allocation.allocation_amount || 0),
+              );
+            }
           }
+        } catch (linkError) {
+          console.error('Could not load payment bank allocations:', linkError);
+          linkStatusFailed = true;
         }
       }
 
@@ -546,6 +562,29 @@ export function PaymentVoucherManager({
           ? canonicalBankLines
           : (legacyBankLine ? [legacyBankLine] : []);
         const bankLine = bankLinesForVoucher[0] || null;
+
+        const canonicalAmount = canonicalAmounts.get(v.id) || 0;
+        const legacyAmount = Number(legacyBankLine?.debit_amount || legacyBankLine?.credit_amount || 0);
+        // Prefer canonical allocations; only fall back to legacy journal matches when no canonical allocation exists
+        const linkedAmount = canonicalAmount > 0.01 ? canonicalAmount : legacyAmount;
+
+        const debitRequired = v.payment_purpose === 'salary_advance_settlement'
+          ? 0
+          : (isCross ? (v.bank_amount || 0) : (v.amount || 0) + (v.bank_charge || 0));
+
+        let bankLinkStatus: 'linked' | 'partial' | 'unlinked' | 'unknown' = 'unlinked';
+        if (linkStatusFailed) {
+          bankLinkStatus = 'unknown';
+        } else if (v.payment_purpose === 'salary_advance_settlement') {
+          bankLinkStatus = 'unlinked';
+        } else if (debitRequired > 0.01 && linkedAmount >= debitRequired - 0.01) {
+          bankLinkStatus = 'linked';
+        } else if (linkedAmount > 0.01) {
+          bankLinkStatus = 'partial';
+        } else {
+          bankLinkStatus = 'unlinked';
+        }
+
         return {
           ...v,
           invoice_currency: invCcy,
@@ -554,6 +593,8 @@ export function PaymentVoucherManager({
           bank_statement_line_id: bankLine?.id || null,
           bank_statement_line: bankLine,
           bank_statement_lines: bankLinesForVoucher,
+          bank_link_status: bankLinkStatus,
+          bank_linked_amount: linkedAmount,
         };
       });
       setVouchers(enriched);
@@ -1453,30 +1494,62 @@ export function PaymentVoucherManager({
             { header: 'Net Paid', align: 'right', cell: (v) => v.payment_purpose === 'salary_advance_settlement'
               ? <span className="text-gray-500 text-[10px]">Salary deduction</span>
               : <span className="font-medium text-red-600">{fmt(v.net_amount, v.invoice_currency || 'IDR')}</span> },
-            ...(canManage ? [{
+            {
               header: 'Actions',
               align: 'center' as const,
-              cell: (v: PaymentVoucher) => (
-                <div className="flex items-center justify-center gap-0.5">
-                  <FinanceActionButton action="view" onClick={(e) => { e.stopPropagation(); handleView(v); }} />
-                  {!v.is_posted && (
-                    <>
-                      <FinanceActionButton action="edit" onClick={(e) => { e.stopPropagation(); handleEdit(v); }} />
-                      <FinanceActionButton action="approve" label="Post to GL" onClick={(e) => { e.stopPropagation(); handlePostVoucher(v); }} disabled={postingLoading === v.id} />
-                    </>
-                  )}
-                  {v.is_posted && (
-                    <FinanceBadge status="posted"><Lock className="mr-0.5 h-3 w-3" /> Posted</FinanceBadge>
-                  )}
-                  {v.is_posted && isAdmin && (
-                    <FinanceActionButton action="reverse" label="Cancel Posting" onClick={(e) => { e.stopPropagation(); openCancelPostingModal(v); }} />
-                  )}
-                  {!v.is_posted && (
-                    <FinanceActionButton action="delete" onClick={(e) => { e.stopPropagation(); handleDelete(v); }} />
-                  )}
-                </div>
-              ),
-            }] : []),
+              cell: (v: PaymentVoucher) => {
+                const bankCcy = v.bank_accounts?.currency || v.payment_currency || 'IDR';
+                const invCcy = v.invoice_currency || 'IDR';
+                const isCross = invCcy !== bankCcy && v.bank_amount != null && v.bank_amount > 0;
+                const debit = isCross ? (v.bank_amount || 0) : (v.amount || 0) + (v.bank_charge || 0);
+
+                return (
+                  <div className="flex items-center justify-center gap-0.5 whitespace-nowrap">
+                    <button
+                      type="button"
+                      aria-label={`Bank reconciliation status for ${v.voucher_number}: ${v.bank_link_status || 'unknown'}`}
+                      onClick={(e) => { e.stopPropagation(); handleView(v); }}
+                      title={
+                        v.bank_link_status === 'linked'
+                          ? 'Bank transaction linked'
+                          : v.bank_link_status === 'partial'
+                            ? `Partially linked · ${fmt(v.bank_linked_amount || 0, bankCcy)} of ${fmt(debit, bankCcy)}`
+                            : v.bank_link_status === 'unlinked'
+                              ? 'Not linked to a bank transaction · Click to check details'
+                              : 'Bank-link status unavailable · Click to check details'
+                      }
+                      className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
+                        v.bank_link_status === 'linked'
+                          ? 'text-green-700 hover:bg-green-50'
+                          : v.bank_link_status === 'partial'
+                            ? 'text-amber-700 hover:bg-amber-50'
+                            : v.bank_link_status === 'unlinked'
+                              ? 'text-red-600 hover:bg-red-50'
+                              : 'text-gray-400 hover:bg-gray-100'
+                      }`}
+                    >
+                      <Link2 className="w-3.5 h-3.5" />
+                    </button>
+                    <FinanceActionButton action="view" onClick={(e) => { e.stopPropagation(); handleView(v); }} />
+                    {canManage && !v.is_posted && (
+                      <>
+                        <FinanceActionButton action="edit" onClick={(e) => { e.stopPropagation(); handleEdit(v); }} />
+                        <FinanceActionButton action="approve" label="Post to GL" onClick={(e) => { e.stopPropagation(); handlePostVoucher(v); }} disabled={postingLoading === v.id} />
+                      </>
+                    )}
+                    {v.is_posted && (
+                      <FinanceBadge status="posted"><Lock className="mr-0.5 h-3 w-3" /> Posted</FinanceBadge>
+                    )}
+                    {canManage && v.is_posted && isAdmin && (
+                      <FinanceActionButton action="reverse" label="Cancel Posting" onClick={(e) => { e.stopPropagation(); openCancelPostingModal(v); }} />
+                    )}
+                    {canManage && !v.is_posted && (
+                      <FinanceActionButton action="delete" onClick={(e) => { e.stopPropagation(); handleDelete(v); }} />
+                    )}
+                  </div>
+                );
+              },
+            },
           ]}
         />
       </FinancePage>

@@ -1165,6 +1165,7 @@ export function ReceiptVoucherManager({
                   <div className="flex h-7 items-center justify-center gap-0.5 whitespace-nowrap">
                     <button
                       type="button"
+                      aria-label={`Bank reconciliation status for ${voucher.voucher_number}: ${voucher.bank_link_status || 'unknown'}`}
                       onClick={() => handleView(voucher)}
                       title={
                         voucher.bank_link_status === 'linked'
@@ -1175,7 +1176,6 @@ export function ReceiptVoucherManager({
                               ? 'Not linked to a bank transaction · Click to link'
                               : 'Bank-link status unavailable · Click to check details'
                       }
-                      aria-label={`Bank reconciliation status for ${voucher.voucher_number}: ${voucher.bank_link_status || 'unknown'}`}
                       className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
                         voucher.bank_link_status === 'linked'
                           ? 'text-green-700 hover:bg-green-50'

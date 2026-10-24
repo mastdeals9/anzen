@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Package, Truck, Pencil as Edit, Trash2, FileText, X, Download, Eye, CheckCircle, XCircle, Clipboard, ClipboardCheck, Lock, RotateCcw, UserPlus, AlertCircle, Banknote, Link2, Search, Clock } from 'lucide-react';
+import { Plus, Package, Truck, Pencil as Edit, Trash2, FileText, X, Download, Eye, CheckCircle, XCircle, Clipboard, ClipboardCheck, Lock, RotateCcw, UserPlus, AlertCircle, Banknote, Link2, Search, Clock, Loader2 } from 'lucide-react';
 import { FinanceModal as Modal } from './FinanceModal';
 import { MoneyInput } from '../MoneyInput';
 import { SearchableSelect } from '../SearchableSelect';
@@ -532,6 +532,9 @@ export function ExpenseManager({
   const [selectedBankAllocationAmount, setSelectedBankAllocationAmount] = useState<number | undefined>();
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const isSubmittingRef = useRef(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const inFlightExpenseIdRef = useRef<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<FinanceExpense | null>(null);
   const [viewingExpense, setViewingExpense] = useState<FinanceExpense | null>(null);
   const [salaryAdvanceApplications, setSalaryAdvanceApplications] = useState<Array<{
@@ -766,70 +769,73 @@ export function ExpenseManager({
       return;
     }
     let cancelled = false;
-    void Promise.all([
-      supabase.rpc('get_outstanding_salary_advances', {
-        p_staff_id: selectedStaffId,
-        p_as_of_date: formData.expense_date,
-      }),
-      supabase.rpc('calculate_staff_salary', {
-        p_staff_id: selectedStaffId,
-        p_salary_date: formData.expense_date,
-        // Amount is prefilled from Staff Master on selection, but remains the
-        // authoritative gross value after the user edits it.
-        p_gross_override: formData.amount,
-      }),
-    ]).then(async ([advancesResult, calculationResult]) => {
-      if (cancelled) return;
-      if (advancesResult.error || calculationResult.error) {
-        console.error('Unable to load canonical salary calculation:', advancesResult.error?.message || calculationResult.error?.message);
-        setSalaryAdvances([]);
-        setSalaryCalculation(null);
-        return;
-      }
-      const calculation = calculationResult.data as typeof salaryCalculation;
-      const preservingHistoricalValues = Boolean(editingExpense?.id)
-        && salaryInitialLoadRef.current !== editingExpense?.id;
-      if (preservingHistoricalValues) salaryInitialLoadRef.current = editingExpense!.id;
-      
-      const existingApplied = editingExpense?.id
-        ? Number((await supabase.rpc('get_salary_advance_applications', { p_salary_expense_id: editingExpense.id })).data?.reduce((sum: number, item: { applied_amount: number }) => sum + Number(item.applied_amount || 0), 0) ?? 0)
-        : 0;
-      const loadedAdvances = (advancesResult.data || []) as typeof salaryAdvances;
-      setSalaryAdvances(loadedAdvances);
-      setSelectedSalaryAdvanceIds(current => {
-        const valid = current.filter(id => loadedAdvances.some(advance => advance.advance_id === id));
-        return valid.length === current.length ? current : valid;
+    const timer = setTimeout(() => {
+      void Promise.all([
+        supabase.rpc('get_outstanding_salary_advances', {
+          p_staff_id: selectedStaffId,
+          p_as_of_date: formData.expense_date,
+        }),
+        supabase.rpc('calculate_staff_salary', {
+          p_staff_id: selectedStaffId,
+          p_salary_date: formData.expense_date,
+          // Amount is prefilled from Staff Master on selection, but remains the
+          // authoritative gross value after the user edits it.
+          p_gross_override: formData.amount,
+        }),
+      ]).then(async ([advancesResult, calculationResult]) => {
+        if (cancelled) return;
+        if (advancesResult.error || calculationResult.error) {
+          console.error('Unable to load canonical salary calculation:', advancesResult.error?.message || calculationResult.error?.message);
+          setSalaryAdvances([]);
+          setSalaryCalculation(null);
+          return;
+        }
+        const calculation = calculationResult.data as typeof salaryCalculation;
+        const preservingHistoricalValues = Boolean(editingExpense?.id)
+          && salaryInitialLoadRef.current !== editingExpense?.id;
+        if (preservingHistoricalValues) salaryInitialLoadRef.current = editingExpense!.id;
+        
+        const existingApplied = editingExpense?.id
+          ? Number((await supabase.rpc('get_salary_advance_applications', { p_salary_expense_id: editingExpense.id })).data?.reduce((sum: number, item: { applied_amount: number }) => sum + Number(item.applied_amount || 0), 0) ?? 0)
+          : 0;
+        const loadedAdvances = (advancesResult.data || []) as typeof salaryAdvances;
+        setSalaryAdvances(loadedAdvances);
+        setSelectedSalaryAdvanceIds(current => {
+          const valid = current.filter(id => loadedAdvances.some(advance => advance.advance_id === id));
+          return valid.length === current.length ? current : valid;
+        });
+        const selectedAdvanceTotal = loadedAdvances
+          .filter(advance => selectedSalaryAdvanceIds.includes(advance.advance_id))
+          .reduce((sum, advance) => sum + Number(advance.available_amount || 0), 0);
+        const advanceApplied = existingApplied > 0 ? existingApplied : selectedAdvanceTotal;
+        setPersistedSalaryAdvanceApplied(existingApplied);
+        setSalaryCalculation(calculation ? {
+          ...calculation,
+          gross_salary: preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary,
+          pph21_amount: preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount,
+          outstanding_salary_advances: advanceApplied,
+          net_salary_payable: Math.max((preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary) - advanceApplied - (preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount) - calculation.bpjs_amount, 0),
+        } : null);
+        // Existing settlement links are persisted facts; new deductions require explicit advance selections.
+        // Only explicitly selected advances can be settled.
+        if (calculation && !preservingHistoricalValues) {
+          const pph21Code = taxCodes.find((code) => code.code.toUpperCase() === 'PPH21');
+          setFormData((previous) => ({
+            ...previous,
+            pph_amount: calculation.pph21_method === 'percentage' ? calculation.pph21_amount : previous.pph_amount,
+            pph_code_id: calculation.pph21_applicable && pph21Code ? pph21Code.id : previous.pph_code_id,
+            payment_method: editingExpense
+              ? previous.payment_method
+              : (calculation.default_payment_method === 'bank_transfer'
+                ? calculation.default_payment_method
+                : previous.payment_method),
+          }));
+        }
       });
-      const selectedAdvanceTotal = loadedAdvances
-        .filter(advance => selectedSalaryAdvanceIds.includes(advance.advance_id))
-        .reduce((sum, advance) => sum + Number(advance.available_amount || 0), 0);
-      const advanceApplied = existingApplied > 0 ? existingApplied : selectedAdvanceTotal;
-      setPersistedSalaryAdvanceApplied(existingApplied);
-      setSalaryCalculation(calculation ? {
-        ...calculation,
-        gross_salary: preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary,
-        pph21_amount: preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount,
-        outstanding_salary_advances: advanceApplied,
-        net_salary_payable: Math.max((preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary) - advanceApplied - (preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount) - calculation.bpjs_amount, 0),
-      } : null);
-      // Existing settlement links are persisted facts; new deductions require explicit advance selections.
-      // Only explicitly selected advances can be settled.
-      if (calculation && !preservingHistoricalValues) {
-        const pph21Code = taxCodes.find((code) => code.code.toUpperCase() === 'PPH21');
-        setFormData((previous) => ({
-          ...previous,
-          pph_amount: calculation.pph21_method === 'percentage' ? calculation.pph21_amount : previous.pph_amount,
-          pph_code_id: calculation.pph21_applicable && pph21Code ? pph21Code.id : previous.pph_code_id,
-          payment_method: editingExpense
-            ? previous.payment_method
-            : (calculation.default_payment_method === 'bank_transfer'
-              ? calculation.default_payment_method
-              : previous.payment_method),
-        }));
-      }
-    });
+    }, 250);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [formData.expense_category, formData.expense_date, formData.amount, selectedStaffId, taxCodes, editingExpense?.id, selectedSalaryAdvanceIds]);
 
@@ -1390,6 +1396,17 @@ export function ExpenseManager({
     await downloadStorageDocument(url, filename);
   };
 
+  const handleViewExpense = useCallback(async (expense: FinanceExpense) => {
+    setViewingExpense(expense);
+    setViewModalOpen(true);
+    if (expense.document_urls?.length) {
+      const entries = await Promise.all(
+        expense.document_urls.map(async (url) => [url, await getSignedUrl(url)] as [string, string])
+      );
+      setSignedUrlCache(prev => ({ ...prev, ...Object.fromEntries(entries) }));
+    }
+  }, []);
+
   const handleAddSoAllocation = () => {
     const existingIds = new Set(soAllocations.map(a => a.sales_order_id));
     const available = salesOrders.find(s => !existingIds.has(s.id));
@@ -1462,6 +1479,10 @@ export function ExpenseManager({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+
     console.log('=== EXPENSE FORM SUBMIT ===');
     console.log('Editing:', !!editingExpense);
     console.log('Files to upload:', uploadingFiles.length);
@@ -1476,18 +1497,26 @@ export function ExpenseManager({
           && !['employee', 'non-permanent individual', 'freelancer', 'casual worker', 'honorarium recipient']
             .includes((selectedSupplier.supplier_type || '').trim().toLowerCase())) {
         alert('Non-Permanent Employee Fee is intended for an individual subject to PPh 21. Select an Employee, Freelancer, Casual Worker, or Honorarium supplier.');
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
         return;
       }
       if (preRules.staff === 'show' && !selectedStaffId) {
         alert('Please pick a Staff member for this salary / staff expense.');
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
         return;
       }
       if (formData.expense_category === 'staff_advance' && !formData.payment_method) {
         alert('A staff advance is money paid out — select how it was paid (it cannot be recorded as an outstanding bill).');
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
         return;
       }
       if (preRules.utility === 'show' && !selectedUtilityId) {
         alert('Please pick a Utility Provider for this utility expense.');
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
         return;
       }
       const category = expenseCategories.find(c => c.value === formData.expense_category);
@@ -1502,10 +1531,14 @@ export function ExpenseManager({
             `Payment Amount = Rp ${(formData.amount || 0).toLocaleString('id-ID')}\n\n` +
             `The three components must equal the total payment amount.`
           );
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
           return;
         }
         if (breakdown === 0) {
           alert('❌ PIB Import requires a breakdown. Please enter BM, PPN, and/or PPh amounts.');
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
           return;
         }
       }
@@ -1518,6 +1551,8 @@ export function ExpenseManager({
           'Select the Fixed Asset GL account (e.g. Equipment, Furniture, Machinery) ' +
           'before saving. The Journal Entry cannot be generated without it.'
         );
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
         return;
       }
 
@@ -1532,6 +1567,8 @@ export function ExpenseManager({
           'Select the applicable PPh code (e.g. PPh21 Employee, PPh23 Services) ' +
           'so the amount flows correctly into the PPh Register.'
         );
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
         return;
       }
 
@@ -1545,6 +1582,8 @@ export function ExpenseManager({
             `Expense Amount = Rp ${(formData.amount || 0).toLocaleString('id-ID')}\n\n` +
             `The total allocated across Sales Orders must equal the expense amount.`
           );
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
           return;
         }
       }
@@ -1672,6 +1711,8 @@ export function ExpenseManager({
         const minRequired = persistedSalaryAdvanceApplied + (Number(formData.pph_amount) || 0);
         if (Number(formData.amount || 0) < minRequired - 0.01) {
           alert(`Cannot reduce gross salary to ${formatCurrency(formData.amount, expenseFormCurrency)}: ${formatCurrency(persistedSalaryAdvanceApplied, expenseFormCurrency)} is already applied in salary advances. Adjust or reverse the advance settlement first.`);
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
           return;
         }
       }
@@ -1784,7 +1825,9 @@ export function ExpenseManager({
           created_by: user.id,
           ...(selectedBankTransactionId ? { originating_bank_statement_line_id: selectedBankTransactionId } : {}),
         };
-        const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
+        const expenseToSaveId = inFlightExpenseIdRef.current || null;
+        const newExpenseId = await saveFinanceExpense(expenseToSaveId, newExpensePayload);
+        inFlightExpenseIdRef.current = newExpenseId;
         if (formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0) {
           const { error: advanceError } = await supabase.rpc('apply_selected_salary_advances_to_expense', {
             p_salary_expense_id: newExpenseId,
@@ -1850,6 +1893,7 @@ export function ExpenseManager({
 
         // Add to local state (with bank link if applicable)
         setExpenses(prev => [finalExpense, ...prev]);
+        inFlightExpenseIdRef.current = null;
         alert('Expense recorded successfully');
       }
 
@@ -1865,6 +1909,9 @@ export function ExpenseManager({
       } else {
         alert('Failed to save expense:\n\n' + errorMessage);
       }
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -2248,6 +2295,9 @@ export function ExpenseManager({
   };
 
   const resetForm = () => {
+    isSubmittingRef.current = false;
+    setIsSubmitting(false);
+    inFlightExpenseIdRef.current = null;
     setEditingExpense(null);
     salaryInitialLoadRef.current = null;
     setSelectedBankTransactionId('');
@@ -2787,7 +2837,7 @@ export function ExpenseManager({
     }
   };
 
-  const formatExpenseTotals = (expensesToTotal: FinanceExpense[]) => {
+  const formatExpenseTotals = useCallback((expensesToTotal: FinanceExpense[]) => {
     const totals = expensesToTotal.reduce<Record<string, number>>((result, expense) => {
       const currency = getExpenseCurrency(expense);
       result[currency] = (result[currency] || 0) + calculateCanonicalExpenseTotal(expense);
@@ -2800,7 +2850,102 @@ export function ExpenseManager({
         maximumFractionDigits: currency === 'IDR' ? 0 : 2,
       }))
       .join(' · ');
-  };
+  }, []);
+
+  const expenseSummaryKpis = useMemo(() => {
+    const activeOrReplaced = filteredExpenses.filter(
+      expense => expense.effective_posting_state === 'ACTIVE' || expense.effective_posting_state === 'REPLACED'
+    );
+    const totalFormatted = formatExpenseTotals(activeOrReplaced) || formatCurrency(0);
+
+    let reconciledCount = 0;
+    let nonCashPaidCount = 0;
+    let outstandingCount = 0;
+
+    for (let i = 0; i < expenses.length; i++) {
+      const e = expenses[i];
+      if (e.effective_posting_state === 'REVERSED') continue;
+
+      const isNotCash = e.payment_method !== 'cash';
+      const paid = e.paid_amount ?? 0;
+
+      if (isNotCash && reconciledExpenseIds.has(e.id)) {
+        reconciledCount++;
+      }
+      if (isNotCash && paid > 0.01) {
+        nonCashPaidCount++;
+      }
+      if (paid <= 0.01 && (calculateCanonicalCashPayable(e) - paid) > 0.01) {
+        outstandingCount++;
+      }
+    }
+
+    return {
+      totalFormatted,
+      reconciledRatio: `${reconciledCount} / ${nonCashPaidCount}`,
+      outstandingCount,
+    };
+  }, [filteredExpenses, expenses, reconciledExpenseIds, formatExpenseTotals]);
+
+  const staffOptions = useMemo(() => [
+    { value: '', label: '— None —' },
+    ...staffRoster.map(s => ({ value: s.id, label: `${s.full_name}${s.department ? ' · ' + s.department : ''}` }))
+  ], [staffRoster]);
+
+  const utilityOptions = useMemo(() => [
+    { value: '', label: '— None —' },
+    ...utilityRoster.map(u => ({ value: u.id, label: `${u.provider_name} · ${u.utility_type}` }))
+  ], [utilityRoster]);
+
+  const payeeOptions = useMemo(() => [
+    { value: '', label: '— Select Payee —' },
+    ...payeeRoster.map((p) => ({
+      value: p.id,
+      label: `${p.full_name}${p.business_role ? ` (${p.business_role.replace(/_/g, ' ')})` : ''}${p.nik || p.npwp ? ` · ${p.npwp || p.nik}` : ' · No NIK/NPWP'}`,
+    }))
+  ], [payeeRoster]);
+
+  const supplierOptions = useMemo(() => [
+    { value: '', label: '— None —' },
+    ...suppliers.map((s) => ({ value: s.id, label: `${s.company_name}${s.pkp_status ? ' ✓PKP' : ''}` }))
+  ], [suppliers]);
+
+  const salesInvoiceOptions = useMemo(() => [
+    { value: '', label: '— None —' },
+    ...salesInvoices.map(si => ({
+      value: si.id,
+      label: `${si.invoice_number} · ${si.customers?.company_name || 'Customer'} · ${formatIDR(si.total_amount)}`,
+    }))
+  ], [salesInvoices]);
+
+  const taxCodeOptions = useMemo(() => [
+    { value: '', label: 'None' },
+    ...taxCodes.map(tc => ({
+      value: tc.id,
+      label: tc.code === 'PPH21-NE' ? 'PPH21-NE — Bukan Pegawai (DPP 50% / Ps 17)'
+        : tc.code === 'PPH21-TT' ? 'PPH21-TT — Pegawai Tidak Tetap (TER Harian)'
+        : tc.code === 'PPH4(2)' ? 'PPH4(2) — Final 10%'
+        : `${tc.code} — ${tc.rate}%`,
+    }))
+  ], [taxCodes]);
+
+  const containerOptions = useMemo(() => [
+    { value: '', label: 'Select import container' },
+    ...containers.map(c => ({ value: c.id, label: c.container_ref }))
+  ], [containers]);
+
+  const challanOptions = useMemo(() => [
+    { value: '', label: 'None' },
+    ...challans.map(ch => ({
+      value: ch.id,
+      label: `${ch.challan_number} — ${new Date(ch.challan_date).toLocaleDateString('en-GB')} — ${ch.customers?.company_name || ''}`,
+    }))
+  ], [challans]);
+
+  const coaAssetOptions = useMemo(() => [
+    { value: '', label: 'Select account' },
+    ...coaAssets.map(a => ({ value: a.id, label: `${a.code} — ${a.name}` }))
+  ], [coaAssets]);
 
   const expenseFormCurrency = normalizeCurrency(
     bankAccounts.find((bank) => bank.id === formData.bank_account_id)?.currency ?? formData.transaction_currency,
@@ -2828,19 +2973,19 @@ export function ExpenseManager({
                 <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-[11px] font-medium">
                   <span className="text-gray-500 font-normal">Total:</span>
                   <span className="font-mono font-semibold">
-                    {formatExpenseTotals(filteredExpenses.filter(expense => expense.effective_posting_state === 'ACTIVE' || expense.effective_posting_state === 'REPLACED')) || formatCurrency(0)}
+                    {expenseSummaryKpis.totalFormatted}
                   </span>
                 </span>
                 <span className="inline-flex items-center gap-1 bg-teal-50 text-teal-800 border border-teal-200/60 px-2 py-0.5 rounded text-[11px] font-medium">
                   <span className="text-teal-600 font-normal">Reconciled:</span>
                   <span className="font-mono font-semibold">
-                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && reconciledExpenseIds.has(e.id)).length} / {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && e.payment_method !== 'cash' && (e.paid_amount ?? 0) > 0.01).length}
+                    {expenseSummaryKpis.reconciledRatio}
                   </span>
                 </span>
                 <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200/60 px-2 py-0.5 rounded text-[11px] font-medium">
                   <span className="text-amber-600 font-normal">Outstanding:</span>
                   <span className="font-mono font-semibold">
-                    {expenses.filter(e => e.effective_posting_state !== 'REVERSED' && (calculateCanonicalCashPayable(e) - (e.paid_amount ?? 0)) > 0.01 && (e.paid_amount ?? 0) <= 0.01).length}
+                    {expenseSummaryKpis.outstandingCount}
                   </span>
                 </span>
               </div>
@@ -3377,42 +3522,53 @@ export function ExpenseManager({
                     </td>
                     {canManage && (
                       <td className="px-2 py-1.5 whitespace-nowrap text-center">
-                        <div className="flex items-center justify-center gap-0.5">
-                          {(postingState === 'ACTIVE' || postingState === 'REPLACED') && !isReconciled && (
-                            <button
-                              type="button"
-                              onClick={() => void handleEdit(expense, true)}
-                              title={
-                                (expense.paid_amount ?? 0) > 0.01 || isPartiallyReconciled
-                                  ? 'Link remaining payment / finish bank reconciliation'
-                                  : 'Link bank transaction'
-                              }
-                              aria-label={
-                                (expense.paid_amount ?? 0) > 0.01 || isPartiallyReconciled
-                                  ? `Link remaining payment for ${expense.voucher_number || 'expense'}`
-                                  : `Link bank transaction for ${expense.voucher_number || 'expense'}`
-                              }
-                              className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
-                                (expense.paid_amount ?? 0) > 0.01 || isPartiallyReconciled
-                                  ? 'text-amber-700 hover:bg-amber-50'
-                                  : 'text-blue-600 hover:bg-blue-50'
-                              }`}
-                            >
-                              <Link2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                        <div className="flex items-center justify-center gap-0.5 whitespace-nowrap">
+                          {(() => {
+                            const expenseLinkStatus = (() => {
+                              if (postingState === 'AMBIGUOUS') return 'unknown';
+                              if (isCancelledPosting || expense.payment_method === 'cash') return 'unlinked';
+                              if (isReconciled && (recon.reconciledAmount > 0.01 || recon.grossCashPayable <= 0.01)) return 'linked';
+                              if (isPartiallyReconciled || recon.reconciledAmount > 0.01) return 'partial';
+                              return 'unlinked';
+                            })();
+
+                            return (
+                              <button
+                                type="button"
+                                aria-label={`Bank reconciliation status for ${expense.voucher_number || 'expense'}: ${expenseLinkStatus}`}
+                                onClick={() => {
+                                  if (expenseLinkStatus === 'linked' || !canManage || isCancelledPosting) {
+                                    void handleViewExpense(expense);
+                                  } else {
+                                    void handleEdit(expense, true);
+                                  }
+                                }}
+                                title={
+                                  expenseLinkStatus === 'linked'
+                                    ? 'Bank transaction linked'
+                                    : expenseLinkStatus === 'partial'
+                                      ? `Partially linked · ${formatCurrency(recon.reconciledAmount || 0, getExpenseCurrency(expense))} of ${formatCurrency(calculateCanonicalCashPayable(expense), getExpenseCurrency(expense))}`
+                                      : expenseLinkStatus === 'unlinked'
+                                        ? 'Not linked to a bank transaction · Click to link'
+                                        : 'Bank-link status unavailable · Click to check details'
+                                }
+                                className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
+                                  expenseLinkStatus === 'linked'
+                                    ? 'text-green-700 hover:bg-green-50'
+                                    : expenseLinkStatus === 'partial'
+                                      ? 'text-amber-700 hover:bg-amber-50'
+                                      : expenseLinkStatus === 'unlinked'
+                                        ? 'text-red-600 hover:bg-red-50'
+                                        : 'text-gray-400 hover:bg-gray-100'
+                                }`}
+                              >
+                                <Link2 className="w-3.5 h-3.5" />
+                              </button>
+                            );
+                          })()}
                           <FinanceActionButton
                             action="view"
-                            onClick={async () => {
-                              setViewingExpense(expense);
-                              setViewModalOpen(true);
-                              if (expense.document_urls?.length) {
-                                const entries = await Promise.all(
-                                  expense.document_urls.map(async (url) => [url, await getSignedUrl(url)] as [string, string])
-                                );
-                                setSignedUrlCache(prev => ({ ...prev, ...Object.fromEntries(entries) }));
-                              }
-                            }}
+                            onClick={() => void handleViewExpense(expense)}
                           />
                           {(postingState === 'ACTIVE' || postingState === 'PENDING' || postingState === 'REJECTED') && (
                             <FinanceActionButton action="edit" onClick={() => handleEdit(expense)} />
@@ -3483,16 +3639,43 @@ export function ExpenseManager({
           size="2xl"
           footer={
             <>
-              <button type="button" onClick={() => { setModalOpen(false); resetForm(); onCloseEmbedded?.(); }} className={F_BTN_SECONDARY}>
+              <button
+                type="button"
+                onClick={() => { setModalOpen(false); resetForm(); onCloseEmbedded?.(); }}
+                className={F_BTN_SECONDARY}
+                disabled={isSubmitting}
+              >
                 Cancel
               </button>
-              <button type="submit" form="expense-form" className={F_BTN_PRIMARY}>
-                {editingExpense ? 'Update' : 'Save'} Expense
+              <button
+                type="submit"
+                form="expense-form"
+                disabled={isSubmitting}
+                className={`${F_BTN_PRIMARY} ${isSubmitting ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                {isSubmitting ? (
+                  <span className="flex items-center gap-1.5">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {editingExpense ? 'Updating...' : 'Saving...'}
+                  </span>
+                ) : (
+                  `${editingExpense ? 'Update' : 'Save'} Expense`
+                )}
               </button>
             </>
           }
         >
-          <form id="expense-form" onSubmit={handleSubmit}>
+          <form
+            id="expense-form"
+            onSubmit={handleSubmit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'TEXTAREA') {
+                if (isSubmittingRef.current) {
+                  e.preventDefault();
+                }
+              }
+            }}
+          >
             {/* ══════════════════════════════════════════════════════════════
                  SAP Business One – style header
                  Horizontal-label 3-column grid. Every field is `label | input`
@@ -3626,7 +3809,7 @@ export function ExpenseManager({
                             }));
                             setSelectedSupplier(null);
                           }}
-                          options={[{ value: '', label: '— None —' }, ...staffRoster.map(s => ({ value: s.id, label: `${s.full_name}${s.department ? ' · ' + s.department : ''}` }))]}
+                          options={staffOptions}
                           placeholder="Search staff..."
                         />
                       ) : rules.utility === 'show' ? (
@@ -3638,32 +3821,21 @@ export function ExpenseManager({
                             if (util?.supplier_id) handleSupplierSelect(util.supplier_id);
                             else { setFormData(prev => ({ ...prev, supplier_id: '' })); setSelectedSupplier(null); }
                           }}
-                          options={[{ value: '', label: '— None —' }, ...utilityRoster.map(u => ({ value: u.id, label: `${u.provider_name} · ${u.utility_type}` }))]}
+                          options={utilityOptions}
                           placeholder="Search utility..."
                         />
                       ) : (rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')) ? (
                         <SearchableSelect
                           value={formData.payee_id}
                           onChange={(val) => handlePayeeSelect(val)}
-                          options={[
-                            { value: '', label: '— Select Payee —' },
-                            ...(rules.payeeRoleFilter
-                              ? payeeRoster.filter(p => p.business_role === rules.payeeRoleFilter).length > 0
-                                ? payeeRoster.filter(p => p.business_role === rules.payeeRoleFilter)
-                                : payeeRoster
-                              : payeeRoster
-                            ).map((p) => ({
-                              value: p.id,
-                              label: `${p.full_name}${p.business_role ? ` (${p.business_role.replace(/_/g, ' ')})` : ''}${p.nik || p.npwp ? ` · ${p.npwp || p.nik}` : ' · No NIK/NPWP'}`,
-                            }))
-                          ]}
+                          options={payeeOptions}
                           placeholder="Search payee..."
                         />
                       ) : (
                         <SearchableSelect
                           value={formData.supplier_id}
                           onChange={(val) => handleSupplierSelect(val)}
-                          options={[{ value: '', label: '— None —' }, ...suppliers.map((s) => ({ value: s.id, label: `${s.company_name}${s.pkp_status ? ' ✓PKP' : ''}` }))]}
+                          options={supplierOptions}
                           placeholder="Search supplier..."
                           onCreateNew={(name) => { setQuickAddSupplierName(name); setShowQuickAddSupplier(true); }}
                         />
@@ -3674,13 +3846,7 @@ export function ExpenseManager({
                         <SearchableSelect
                           value={formData.linked_sales_invoice_id}
                           onChange={(val) => handleSalesInvoiceSelect(val)}
-                          options={[
-                            { value: '', label: '— None —' },
-                            ...salesInvoices.map(si => ({
-                              value: si.id,
-                              label: `${si.invoice_number} · ${si.customers?.company_name || 'Customer'} · ${formatIDR(si.total_amount)}`,
-                            }))
-                          ]}
+                          options={salesInvoiceOptions}
                           placeholder="Search sales invoice..."
                         />
                       </SapField>
@@ -3939,13 +4105,7 @@ export function ExpenseManager({
                         <SearchableSelect
                           value={formData.pph_code_id}
                           onChange={(val) => handleTaxCodeChange(val)}
-                          options={[{ value: '', label: 'None' }, ...taxCodes.map(tc => ({
-                            value: tc.id,
-                            label: tc.code === 'PPH21-NE' ? 'PPH21-NE — Bukan Pegawai (DPP 50% / Ps 17)'
-                              : tc.code === 'PPH21-TT' ? 'PPH21-TT — Pegawai Tidak Tetap (TER Harian)'
-                              : tc.code === 'PPH4(2)' ? 'PPH4(2) — Final 10%'
-                              : `${tc.code} — ${tc.rate}%`,
-                          }))]}
+                          options={taxCodeOptions}
                           placeholder="None"
                         />
                       </SapField>
@@ -3969,7 +4129,7 @@ export function ExpenseManager({
                         <SearchableSelect
                           value={formData.import_container_id}
                           onChange={(val) => setFormData({ ...formData, import_container_id: val })}
-                          options={[{ value: '', label: 'Select import container' }, ...containers.map(c => ({ value: c.id, label: c.container_ref }))]}
+                          options={containerOptions}
                           placeholder="Select import container"
                         />
                       </SapField>
@@ -3979,7 +4139,7 @@ export function ExpenseManager({
                         <SearchableSelect
                           value={formData.delivery_challan_id}
                           onChange={(val) => setFormData({ ...formData, delivery_challan_id: val })}
-                          options={[{ value: '', label: 'None' }, ...challans.map(ch => ({ value: ch.id, label: `${ch.challan_number} — ${new Date(ch.challan_date).toLocaleDateString('en-GB')} — ${ch.customers?.company_name || ''}` }))]}
+                          options={challanOptions}
                           placeholder="None"
                         />
                       </SapField>
@@ -3989,7 +4149,7 @@ export function ExpenseManager({
                         <SearchableSelect
                           value={formData.fixed_asset_account_id}
                           onChange={(val) => setFormData({ ...formData, fixed_asset_account_id: val })}
-                          options={[{ value: '', label: 'Select account' }, ...coaAssets.map(a => ({ value: a.id, label: `${a.code} — ${a.name}` }))]}
+                          options={coaAssetOptions}
                           placeholder="Select account"
                         />
                       </SapField>
@@ -4338,10 +4498,7 @@ export function ExpenseManager({
                                     <SearchableSelect
                                       value={item.supplier_id || ''}
                                       onChange={(val) => updateLine(idx, { supplier_id: val || null })}
-                                      options={[
-                                        { value: '', label: '— None —' },
-                                        ...suppliers.map(s => ({ value: s.id, label: `${s.company_name}${s.pkp_status ? ' ✓PKP' : ''}` })),
-                                      ]}
+                                      options={supplierOptions}
                                       placeholder="Search..."
                                     />
                                   </div>
