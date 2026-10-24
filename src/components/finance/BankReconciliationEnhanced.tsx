@@ -4988,16 +4988,33 @@ export function BankReconciliationEnhanced({
                           reference: recordingLine.reference || '',
                         };
                         setRecordModal(false);
-                        if (onRecordExpense) {
-                          onRecordExpense(prefill);
-                        } else {
-                          setEmbeddedExpensePrefill(prefill);
-                        }
+                        setEmbeddedExpensePrefill(prefill);
                       }}
                       className="w-full py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm flex items-center justify-center gap-2 shadow-sm"
                     >
-                      <span>Open Full Expense Form</span>
+                      <span>Record as Expense</span>
                     </button>
+                    {onRecordExpense && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prefill: BankReconciliationExpensePrefill = {
+                            statementLineId: recordingLine.id,
+                            bankAccountId: selectedBank,
+                            date: recordingLine.date,
+                            amount: recordingLine.debit,
+                            description: recordingLine.description,
+                            currency: recordingLine.currency as 'IDR' | 'USD',
+                            reference: recordingLine.reference || '',
+                          };
+                          setRecordModal(false);
+                          onRecordExpense(prefill);
+                        }}
+                        className="w-full py-1.5 text-xs text-slate-500 hover:text-blue-600 font-medium text-center"
+                      >
+                        Open Full Expense Form
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <form
@@ -6643,16 +6660,19 @@ export function BankReconciliationEnhanced({
             await loadStatementLines();
             await loadExpenses();
             notifyFinanceReconciliationRefresh();
+            const isApproved = savedExpense.approval_status === 'approved';
             setActionFeedback({
               type: 'success',
-              title: 'Expense recorded as pending',
-              message: 'Expense created and linked to statement line. An authorized approver must approve it before posting.',
+              title: isApproved ? 'Expense recorded & reconciled' : 'Expense recorded as pending',
+              message: isApproved
+                ? 'Expense created, approved, posted to general ledger, and reconciled to bank transaction.'
+                : 'Expense created and linked to statement line. An authorized approver must approve it before posting.',
               details: [
                 { label: 'Expense ID', value: savedExpense.id.slice(0, 8) },
                 { label: 'Amount', value: formatCurrency(savedExpense.amount, savedExpense.transaction_currency) },
                 { label: 'Category', value: savedExpense.expense_category },
                 { label: 'Date', value: new Date(savedExpense.expense_date).toLocaleDateString('id-ID') },
-                { label: 'Status', value: 'Pending Approval' },
+                { label: 'Status', value: isApproved ? 'Approved & Reconciled' : 'Pending Approval' },
               ],
               timestamp: Date.now(),
             });

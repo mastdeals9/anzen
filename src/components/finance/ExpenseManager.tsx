@@ -1203,45 +1203,7 @@ export function ExpenseManager({
   const loadData = async () => {
     try {
       setLoading(true);
-      // perf: server-side date filter (was client-side .filter in filteredExpenses).
-      let expensesQuery = supabase
-        .from('finance_expenses')
-        .select(`
-          *,
-          suppliers(id, company_name),
-          batches(batch_number),
-          import_containers(container_ref),
-          delivery_challans(challan_number),
-          bank_accounts(bank_name, account_number, alias, currency),
-          bank_statement_lines!bsl_matched_expense_fk(
-            id,
-            transaction_date,
-            description,
-            debit_amount,
-            credit_amount,
-            bank_account_id,
-            bank_accounts(bank_name, account_number, alias, currency)
-          ),
-          salary_advance_applications(
-            id,
-            applied_amount,
-            advance_payment_voucher_id,
-            settlement_payment_voucher_id
-          ),
-          voucher_allocations(
-            id,
-            allocated_amount,
-            payment_kind,
-            payment_vouchers(voucher_number, voucher_date, payment_purpose)
-          )
-        `)
-        .order('expense_date', { ascending: false })
-        .order('created_at', { ascending: false });
-      if (startDate) expensesQuery = expensesQuery.gte('expense_date', startDate);
-      if (endDate) expensesQuery = expensesQuery.lte('expense_date', endDate);
-
-      const [expensesRes, batchesRes, containersRes, challansRes, banksRes, bankStmtRes, salesOrdersRes] = await Promise.all([
-        expensesQuery,
+      const dropdownQueries = [
         supabase
           .from('batches')
           .select('id, batch_number')
@@ -1260,69 +1222,130 @@ export function ExpenseManager({
           .select('id, bank_name, account_number, alias, currency')
           .order('bank_name'),
         supabase
-          .from('bank_statement_lines')
-          .select('matched_expense_id')
-          .not('matched_expense_id', 'is', null),
-        supabase
           .from('sales_orders')
           .select('id, so_number, total_amount, currency, customers(company_name)')
           .order('so_number', { ascending: false })
           .limit(100),
-      ]);
+      ] as const;
 
-      if (expensesRes.error) throw expensesRes.error;
-      const loadedExpenses = await hydrateExpensePostingLifecycle((expensesRes.data || []) as FinanceExpense[]);
+      if (embeddedModalOnly) {
+        const [batchesRes, containersRes, challansRes, banksRes, salesOrdersRes] = await Promise.all(dropdownQueries);
+        setBatches(batchesRes.data || []);
+        setContainers(containersRes.data || []);
+        setChallans((challansRes.data || []).map(challan => ({
+          ...challan,
+          customers: Array.isArray(challan.customers) ? challan.customers[0] || null : challan.customers,
+        })));
+        setSalesOrders((salesOrdersRes.data || []).map((so: any) => ({
+          ...so,
+          customers: Array.isArray(so.customers) ? so.customers[0] || null : so.customers,
+        })));
+        setBankAccounts(banksRes.data || []);
+      } else {
+        // perf: server-side date filter (was client-side .filter in filteredExpenses).
+        let expensesQuery = supabase
+          .from('finance_expenses')
+          .select(`
+            *,
+            suppliers(id, company_name),
+            batches(batch_number),
+            import_containers(container_ref),
+            delivery_challans(challan_number),
+            bank_accounts(bank_name, account_number, alias, currency),
+            bank_statement_lines!bsl_matched_expense_fk(
+              id,
+              transaction_date,
+              description,
+              debit_amount,
+              credit_amount,
+              bank_account_id,
+              bank_accounts(bank_name, account_number, alias, currency)
+            ),
+            salary_advance_applications(
+              id,
+              applied_amount,
+              advance_payment_voucher_id,
+              settlement_payment_voucher_id
+            ),
+            voucher_allocations(
+              id,
+              allocated_amount,
+              payment_kind,
+              payment_vouchers(voucher_number, voucher_date, payment_purpose)
+            )
+          `)
+          .order('expense_date', { ascending: false })
+          .order('created_at', { ascending: false });
+        if (startDate) expensesQuery = expensesQuery.gte('expense_date', startDate);
+        if (endDate) expensesQuery = expensesQuery.lte('expense_date', endDate);
 
-      // Ensure salary advance applications are hydrated for all salary expenses
-      const salaryExpensesWithoutApps = loadedExpenses.filter(
-        e => e.expense_category === 'salary' && (!e.salary_advance_applications || e.salary_advance_applications.length === 0)
-      );
-      if (salaryExpensesWithoutApps.length > 0) {
-        const { data: advanceApps } = await supabase
-          .from('salary_advance_applications')
-          .select('id, salary_expense_id, applied_amount, advance_payment_voucher_id, settlement_payment_voucher_id')
-          .in('salary_expense_id', salaryExpensesWithoutApps.map(e => e.id));
-        if (advanceApps && advanceApps.length > 0) {
-          const appsByExpId = new Map<string, any[]>();
-          advanceApps.forEach(app => {
-            const list = appsByExpId.get(app.salary_expense_id) || [];
-            list.push(app);
-            appsByExpId.set(app.salary_expense_id, list);
-          });
-          loadedExpenses.forEach(exp => {
-            if (appsByExpId.has(exp.id)) {
-              exp.salary_advance_applications = appsByExpId.get(exp.id);
+        const [expensesRes, batchesRes, containersRes, challansRes, banksRes, salesOrdersRes, bankStmtRes] = await Promise.all([
+          expensesQuery,
+          dropdownQueries[0],
+          dropdownQueries[1],
+          dropdownQueries[2],
+          dropdownQueries[3],
+          dropdownQueries[4],
+          supabase
+            .from('bank_statement_lines')
+            .select('matched_expense_id')
+            .not('matched_expense_id', 'is', null),
+        ]);
+
+        if (expensesRes.error) throw expensesRes.error;
+        const loadedExpenses = await hydrateExpensePostingLifecycle((expensesRes.data || []) as FinanceExpense[]);
+
+        // Ensure salary advance applications are hydrated for all salary expenses
+        const salaryExpensesWithoutApps = loadedExpenses.filter(
+          e => e.expense_category === 'salary' && (!e.salary_advance_applications || e.salary_advance_applications.length === 0)
+        );
+        if (salaryExpensesWithoutApps.length > 0) {
+          const { data: advanceApps } = await supabase
+            .from('salary_advance_applications')
+            .select('id, salary_expense_id, applied_amount, advance_payment_voucher_id, settlement_payment_voucher_id')
+            .in('salary_expense_id', salaryExpensesWithoutApps.map(e => e.id));
+          if (advanceApps && advanceApps.length > 0) {
+            const appsByExpId = new Map<string, any[]>();
+            advanceApps.forEach(app => {
+              const list = appsByExpId.get(app.salary_expense_id) || [];
+              list.push(app);
+              appsByExpId.set(app.salary_expense_id, list);
+            });
+            loadedExpenses.forEach(exp => {
+              if (appsByExpId.has(exp.id)) {
+                exp.salary_advance_applications = appsByExpId.get(exp.id);
+              }
+            });
+          }
+        }
+
+        setExpenses(loadedExpenses);
+        // Legacy matched_* joins intentionally disappear for split allocations;
+        // hydrate the canonical allocation relationships for payment breakdowns.
+        void syncExpenseBankLinks(loadedExpenses.map((expense: any) => expense.id));
+        setBatches(batchesRes.data || []);
+        setContainers(containersRes.data || []);
+        setChallans((challansRes.data || []).map(challan => ({
+          ...challan,
+          customers: Array.isArray(challan.customers) ? challan.customers[0] || null : challan.customers,
+        })));
+        setSalesOrders((salesOrdersRes.data || []).map((so: any) => ({
+          ...so,
+          customers: Array.isArray(so.customers) ? so.customers[0] || null : so.customers,
+        })));
+        setBankAccounts(banksRes.data || []);
+
+        // Build set of reconciled expense IDs
+        const reconciledIds = new Set<string>();
+        if (bankStmtRes.data) {
+          bankStmtRes.data.forEach(line => {
+            if (line.matched_expense_id) {
+              reconciledIds.add(line.matched_expense_id);
             }
           });
         }
+        setReconciledExpenseIds(reconciledIds);
       }
-
-      setExpenses(loadedExpenses);
-      // Legacy matched_* joins intentionally disappear for split allocations;
-      // hydrate the canonical allocation relationships for payment breakdowns.
-      void syncExpenseBankLinks(loadedExpenses.map((expense: any) => expense.id));
-      setBatches(batchesRes.data || []);
-      setContainers(containersRes.data || []);
-      setChallans((challansRes.data || []).map(challan => ({
-        ...challan,
-        customers: Array.isArray(challan.customers) ? challan.customers[0] || null : challan.customers,
-      })));
-      setSalesOrders((salesOrdersRes.data || []).map((so: any) => ({
-        ...so,
-        customers: Array.isArray(so.customers) ? so.customers[0] || null : so.customers,
-      })));
-      setBankAccounts(banksRes.data || []);
-
-      // Build set of reconciled expense IDs
-      const reconciledIds = new Set<string>();
-      if (bankStmtRes.data) {
-        bankStmtRes.data.forEach(line => {
-          if (line.matched_expense_id) {
-            reconciledIds.add(line.matched_expense_id);
-          }
-        });
-      }
-      setReconciledExpenseIds(reconciledIds);
 
       // Load tax codes (withholding PPh) and asset COA accounts once
       if (taxCodes.length === 0) {
@@ -1816,7 +1839,11 @@ export function ExpenseManager({
             .single();
           if (checkErr) throw checkErr;
           if (lineCheck?.matched_expense_id) {
-            throw new Error(`This bank statement line is already linked to an expense (ID: ${lineCheck.matched_expense_id}).`);
+            if (inFlightExpenseIdRef.current && lineCheck.matched_expense_id === inFlightExpenseIdRef.current) {
+              // Retry of same operation after network timeout
+            } else {
+              throw new Error(`This bank statement line is already linked to an expense (ID: ${lineCheck.matched_expense_id}).`);
+            }
           }
         }
 
@@ -1825,9 +1852,11 @@ export function ExpenseManager({
           created_by: user.id,
           ...(selectedBankTransactionId ? { originating_bank_statement_line_id: selectedBankTransactionId } : {}),
         };
+        // Ensure new expense is saved without premature posting: const newExpenseId = await saveFinanceExpense(null, newExpensePayload);
         const expenseToSaveId = inFlightExpenseIdRef.current || null;
         const newExpenseId = await saveFinanceExpense(expenseToSaveId, newExpensePayload);
         inFlightExpenseIdRef.current = newExpenseId;
+
         if (formData.expense_category === 'salary' && selectedStaffId && selectedSalaryAdvanceIds.length > 0) {
           const { error: advanceError } = await supabase.rpc('apply_selected_salary_advances_to_expense', {
             p_salary_expense_id: newExpenseId,
@@ -1835,6 +1864,19 @@ export function ExpenseManager({
           });
           if (advanceError) throw advanceError;
         }
+
+        if (selectedBankTransactionId && newExpenseId) {
+          await supabase
+            .from('finance_expenses')
+            .update({ originating_bank_statement_line_id: selectedBankTransactionId })
+            .eq('id', newExpenseId);
+        }
+
+        // For authorized administrators, approve and post directly via existing authorized server pipeline
+        if (isAdmin && newExpenseId) {
+          await approveFinanceExpense(newExpenseId, profile?.id || user.id);
+        }
+
         const selectClause = `
             *,
             batches (batch_number),
@@ -1894,7 +1936,9 @@ export function ExpenseManager({
         // Add to local state (with bank link if applicable)
         setExpenses(prev => [finalExpense, ...prev]);
         inFlightExpenseIdRef.current = null;
-        alert('Expense recorded successfully');
+        if (!embeddedModalOnly) {
+          alert('Expense recorded successfully');
+        }
       }
 
       setModalOpen(false);
@@ -3821,7 +3865,7 @@ export function ExpenseManager({
                             if (util?.supplier_id) handleSupplierSelect(util.supplier_id);
                             else { setFormData(prev => ({ ...prev, supplier_id: '' })); setSelectedSupplier(null); }
                           }}
-                          options={utilityOptions}
+                          options={utilityOptions /* options={utilityRoster.map(u => ({ value: u.id, label: `${u.provider_name} · ${u.utility_type}` }))} */}
                           placeholder="Search utility..."
                         />
                       ) : (rules.payee === 'show' || (rules.providerTypeToggle && providerType === 'individual')) ? (
