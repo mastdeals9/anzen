@@ -78,6 +78,8 @@ interface ReceiptVoucher {
   bank_accounts?: { account_name: string; bank_name: string; alias?: string; currency: string };
   allocated_to?: string;
   company_snapshot?: CompanySnapshot | null;
+  bank_link_status?: 'linked' | 'partial' | 'unlinked' | 'unknown';
+  bank_linked_amount?: number;
 }
  
 interface ReceiptAllocationItem {
@@ -266,7 +268,70 @@ export function ReceiptVoucherManager({
         })
       );
 
-      setVouchers(vouchersWithAllocations);
+      // Calculate bank-link status once for the whole list. Prefer canonical
+      // allocations; only fall back to legacy matched_receipt_id when no canonical
+      // receipt allocation exists for that voucher, avoiding double-counting.
+      const voucherIds = vouchersWithAllocations.map(voucher => voucher.id);
+      const linkStatusByVoucher = new Map<string, { status: 'linked' | 'partial' | 'unlinked' | 'unknown'; amount: number }>();
+
+      try {
+        if (voucherIds.length > 0) {
+          const [{ data: canonicalAllocations, error: allocationError }, { data: legacyBankLines, error: legacyError }] = await Promise.all([
+            supabase
+              .from('bank_statement_allocations')
+              .select('document_id, allocation_amount')
+              .eq('document_type', 'receipt')
+              .in('document_id', voucherIds),
+            supabase
+              .from('bank_statement_lines')
+              .select('id, matched_receipt_id, debit_amount, credit_amount')
+              .in('matched_receipt_id', voucherIds),
+          ]);
+          if (allocationError) throw allocationError;
+          if (legacyError) throw legacyError;
+
+          const canonicalAmounts = new Map<string, number>();
+          for (const allocation of canonicalAllocations || []) {
+            canonicalAmounts.set(
+              allocation.document_id,
+              (canonicalAmounts.get(allocation.document_id) || 0) + Number(allocation.allocation_amount || 0),
+            );
+          }
+
+          const legacyAmounts = new Map<string, number>();
+          for (const line of legacyBankLines || []) {
+            const voucherId = line.matched_receipt_id;
+            if (!voucherId) continue;
+            legacyAmounts.set(
+              voucherId,
+              (legacyAmounts.get(voucherId) || 0) + Number(line.credit_amount || line.debit_amount || 0),
+            );
+          }
+
+          for (const voucher of vouchersWithAllocations) {
+            const canonicalAmount = canonicalAmounts.get(voucher.id) || 0;
+            const linkedAmount = canonicalAmount > 0.01 ? canonicalAmount : (legacyAmounts.get(voucher.id) || 0);
+            const amount = Number(voucher.amount || 0);
+            const status = linkedAmount >= amount - 0.01
+              ? 'linked'
+              : linkedAmount > 0.01
+                ? 'partial'
+                : 'unlinked';
+            linkStatusByVoucher.set(voucher.id, { status, amount: linkedAmount });
+          }
+        }
+      } catch (linkStatusError) {
+        console.error('Could not load receipt bank-link status:', linkStatusError);
+        for (const voucher of vouchersWithAllocations) {
+          linkStatusByVoucher.set(voucher.id, { status: 'unknown', amount: 0 });
+        }
+      }
+
+      setVouchers(vouchersWithAllocations.map(voucher => ({
+        ...voucher,
+        bank_link_status: linkStatusByVoucher.get(voucher.id)?.status || 'unknown',
+        bank_linked_amount: linkStatusByVoucher.get(voucher.id)?.amount || 0,
+      })));
     } catch (error) {
       console.error('Error loading vouchers:', error);
     } finally {
@@ -1098,6 +1163,31 @@ export function ReceiptVoucherManager({
                 </td>
                 <td className="px-2 py-1.5 align-middle">
                   <div className="flex h-7 items-center justify-center gap-0.5 whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => handleView(voucher)}
+                      title={
+                        voucher.bank_link_status === 'linked'
+                          ? 'Bank transaction linked'
+                          : voucher.bank_link_status === 'partial'
+                            ? `Partially linked · ${formatCurrency(voucher.bank_linked_amount || 0, voucherCurrency(voucher))} of ${formatCurrency(voucher.amount, voucherCurrency(voucher))}`
+                            : voucher.bank_link_status === 'unlinked'
+                              ? 'Not linked to a bank transaction · Click to link'
+                              : 'Bank-link status unavailable · Click to check details'
+                      }
+                      aria-label={`Bank reconciliation status for ${voucher.voucher_number}: ${voucher.bank_link_status || 'unknown'}`}
+                      className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
+                        voucher.bank_link_status === 'linked'
+                          ? 'text-green-700 hover:bg-green-50'
+                          : voucher.bank_link_status === 'partial'
+                            ? 'text-amber-700 hover:bg-amber-50'
+                            : voucher.bank_link_status === 'unlinked'
+                              ? 'text-red-600 hover:bg-red-50'
+                              : 'text-gray-400 hover:bg-gray-100'
+                      }`}
+                    >
+                      <Link2 className="w-3.5 h-3.5" />
+                    </button>
                     <FinanceActionButton action="view" label="View Details" onClick={() => handleView(voucher)} />
                     {canManage && !voucher.is_posted && (
                       <>
