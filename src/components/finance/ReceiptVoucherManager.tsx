@@ -312,7 +312,7 @@ export function ReceiptVoucherManager({
             const canonicalAmount = canonicalAmounts.get(voucher.id) || 0;
             const linkedAmount = canonicalAmount > 0.01 ? canonicalAmount : (legacyAmounts.get(voucher.id) || 0);
             const amount = Number(voucher.amount || 0);
-            const status = linkedAmount >= amount - 0.01
+            const status = amount > 0.01 && linkedAmount >= amount - 0.01
               ? 'linked'
               : linkedAmount > 0.01
                 ? 'partial'
